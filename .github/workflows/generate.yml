@@ -4,10 +4,10 @@ on:
     - cron: '17 1 * * *'
   workflow_dispatch:
 permissions:
-  contents: write
-  actions: read
+  contents: read
+  id-token: write
 concurrency:
-  group: daily-video-bot-state
+  group: daily-cloud-render
   cancel-in-progress: false
 jobs:
   generate:
@@ -15,24 +15,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      GITHUB_TOKEN: ${{ github.token }}
-      GITHUB_REPOSITORY: ${{ github.repository }}
-      GITHUB_RUN_ID: ${{ github.run_id }}
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-2.5-flash' }}
-      PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      CLOUDFLARE_WORKER_URL: ${{ vars.CLOUDFLARE_WORKER_URL }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Check free services are configured
+      - name: Verify configuration and tests
         run: |
-          python -c "import os; assert all(os.environ.get(k) for k in ['GEMINI_API_KEY','PEXELS_API_KEY','TELEGRAM_BOT_TOKEN','TELEGRAM_CHAT_ID']), 'Required secrets are missing'"
+          python -c "from cloud_render import worker_url; worker_url()"
           python -m unittest discover -s tests -v
-      - name: Install video tools and pinned MoneyPrinterTurbo source
+      - name: Install video tools and pinned MoneyPrinterTurbo
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg fonts-noto-core
@@ -40,20 +35,5 @@ jobs:
           git -C mpt checkout ab6004e5858998b2ce99ac46c0f16675eea9ab6f
           python -m pip install uv==0.12.12
           uv pip install --system --overrides mpt/requirements-security.txt -r mpt/requirements.txt
-      - name: Generate without publishing
-        id: generate
-        run: python bot.py generate
-      - name: Store exact preview for approval (expires after two days)
-        if: steps.generate.outputs.generated == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: preview-${{ github.run_id }}
-          path: |
-            out/video.mp4
-            out/metadata.json
-          retention-days: 2
-          compression-level: 0
-          if-no-files-found: error
-      - name: Register preview
-        if: steps.generate.outputs.generated == 'true'
-        run: python bot.py register
+      - name: Render and send preview using workload identity
+        run: python cloud_render.py

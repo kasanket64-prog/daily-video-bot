@@ -2,7 +2,7 @@ name: Check bot
 on:
   push:
     branches: [main]
-    paths: ['*.py', 'tests/**', '.github/workflows/**']
+    paths: ['*.py', 'tests/**', 'cloudflare/**', '.github/workflows/**']
   pull_request:
   workflow_dispatch:
 permissions:
@@ -16,5 +16,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
       - run: python -m unittest discover -s tests -v
-      - run: python -m py_compile bot.py render.py
+      - run: python -m py_compile bot.py render.py cloud_render.py render_cloud.py
+      - run: node --test cloudflare/worker.test.mjs
