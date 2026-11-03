@@ -32,7 +32,7 @@ jobs:
           python -u - <<'PY'
           from cloud_render import identity, worker_url
           from bot import APIError, http
-          import base64, json, time
+          import base64, json
           worker = worker_url()
           try:
               print('Checking Worker health')
@@ -40,16 +40,7 @@ jobs:
               print('Checking GitHub workload identity')
               token = identity(worker)
               part = token.split('.')[1]
-              claims = json.loads(base64.urlsafe_b64decode(part + '=' * (-len(part) % 4)))
-              expected = {'iss': 'https://token.actions.githubusercontent.com', 'aud': worker,
-                  'sub': 'repo:kasanket64-prog/daily-video-bot:ref:refs/heads/main',
-                  'repository': 'kasanket64-prog/daily-video-bot', 'repository_id': '1444540860',
-                  'repository_owner_id': '232636360', 'ref': 'refs/heads/main',
-                  'workflow_ref': 'kasanket64-prog/daily-video-bot/.github/workflows/generate.yml@refs/heads/main',
-                  'event_name': 'workflow_dispatch'}
-              print('Identity claim checks:', {key: claims.get(key) == value for key, value in expected.items()})
-              print('Identity time checks:', {'not_expired': claims.get('exp', 0) > time.time(),
-                  'recent': time.time() - 600 <= claims.get('iat', 0) <= time.time() + 30})
+              print('Repository identity subject:', json.loads(base64.urlsafe_b64decode(part + '=' * (-len(part) % 4))).get('sub'))
               print('Checking Worker renderer authorization')
               http('POST', worker + '/render/job', headers={'Authorization': 'Bearer ' + token}, data={})
               print('Cloud connection accepted')
