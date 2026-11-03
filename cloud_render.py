@@ -72,9 +72,11 @@ def main():
     materials = meta.get("materials")
     if not isinstance(materials, list) or not 0 <= len(materials) <= 3:
         raise RuntimeError("Invalid render materials")
-    local = download_materials(materials, out)
+    materials_dir = ROOT / 'mpt/storage/local_videos'
+    materials_dir.mkdir(parents=True, exist_ok=True)
+    local = download_materials(materials, materials_dir)
     if not local:
-        destination = out / 'original-background.mp4'
+        destination = materials_dir / 'original-background.mp4'
         subprocess.run(['ffmpeg', '-y', '-f', 'lavfi', '-i',
             'color=c=0x14213d:s=720x1280:r=15:d=15', '-vf',
             'drawgrid=w=120:h=120:t=1:c=0x285c69,zoompan=z=min(zoom+0.0005\\,1.1):d=1:s=720x1280:fps=15',
