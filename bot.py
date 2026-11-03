@@ -185,7 +185,7 @@ def trends():
 
 
 def make_script(entries):
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    model = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
     if not re.fullmatch(r"[a-zA-Z0-9._-]+", model):
         raise RuntimeError("Invalid GEMINI_MODEL")
     prompt = ('Choose one of these current Indian search trends suitable for an original short explainer. '
