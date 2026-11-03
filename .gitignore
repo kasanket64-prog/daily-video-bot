@@ -1,0 +1,7 @@
+out/
+mpt/
+__pycache__/
+*.pyc
+.env
+*token*.json
+client_secret*.json
