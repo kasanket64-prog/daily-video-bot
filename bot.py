@@ -45,6 +45,7 @@ def required(name):
 
 def http(method, url, *, headers=None, data=None, raw=False, timeout=90):
     headers = dict(headers or {})
+    headers.setdefault("User-Agent", "daily-video-bot/1.0 (+https://github.com/kasanket64-prog/daily-video-bot)")
     if isinstance(data, dict):
         data = json.dumps(data).encode()
         headers.setdefault("Content-Type", "application/json")
