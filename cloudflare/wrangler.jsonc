@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "daily-video-approvals",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-11-03",
+  "workers_dev": true,
+  "observability": { "enabled": false },
+  "vars": {
+    "AUTOMATION_ENABLED": "false",
+    "REPOSITORY": "kasanket64-prog/daily-video-bot",
+    "REPOSITORY_ID": "1444540860",
+    "OWNER_ID": "232636360",
+    "WORKER_URL": "https://daily-video-approvals.kasanket64.workers.dev",
+    "GEMINI_MODEL": "gemini-2.5-flash",
+    "YOUTUBE_PRIVACY": "private"
+  },
+  "d1_databases": [{ "binding": "DB", "database_name": "daily-video-bot", "database_id": "85017e14-d90a-4243-8b70-8f6d7e133b6a" }],
+  "triggers": { "crons": ["*/5 * * * *"] }
+}
