@@ -1,8 +1,33 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import worker, { validateClaims, authenticate, validateMetadata, allowedApproval, parseTrends } from './worker.mjs';
+import worker, { validateClaims, authenticate, validateMetadata, allowedApproval, parseTrends, prepareJob } from './worker.mjs';
 
 const env = { REPOSITORY: 'owner/repo', REPOSITORY_ID: '123', OWNER_ID: '456', TELEGRAM_USER_ID: '7', TELEGRAM_CHAT_ID: '7' };
+test('failed preparation can retry while completed previews are never reserved again', async () => {
+  let job = null, reservations = 0, requests = 0;
+  const DB = { prepare(sql) { return { bind(...values) { return {
+    async first() { return job; },
+    async run() {
+      if (sql.startsWith('INSERT INTO jobs')) {
+        reservations++;
+        job = { id: values[0], run_id: values[1], status: 'preparing' };
+      } else if (sql.startsWith("UPDATE jobs SET status='failed'")) job.status = 'failed';
+      return { meta: { changes: 1 } };
+    }
+  }; } }; } };
+  const oldFetch = globalThis.fetch;
+  globalThis.fetch = async () => { requests++; return new Response('', { status: 503 }); };
+  try {
+    await assert.rejects(prepareJob({ DB }, { run_id: '1' }), /Trend feed unavailable/);
+    assert.equal(job.status, 'failed');
+    await assert.rejects(prepareJob({ DB }, { run_id: '2' }), /Trend feed unavailable/);
+    assert.equal(reservations, 2);
+    job.status = 'ready';
+    assert.deepEqual(await (await prepareJob({ DB }, { run_id: '3' })).json(), { skip: true });
+    assert.equal(reservations, 2);
+    assert.equal(requests, 2);
+  } finally { globalThis.fetch = oldFetch; }
+});
 function claims() {
   return { iss: 'https://token.actions.githubusercontent.com', sub: 'repo:owner/repo:ref:refs/heads/main', aud: 'https://bot.workers.dev',
     repository: 'owner/repo', repository_id: '123', repository_owner_id: '456', ref: 'refs/heads/main',
