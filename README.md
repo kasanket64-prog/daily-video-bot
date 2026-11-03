@@ -2,7 +2,7 @@
 
 This revision uses **Cloudflare Workers Free + D1 Free** for private configuration, script preparation, Telegram approval, job state, and publishing. GitHub Actions only renders video. No account token or provider key is configured as a GitHub Secret or sent to its runner.
 
-Status: cloud automation enabled and Telegram webhook connected. The first live cloud render and Telegram preview delivery succeeded on 4 November 2026 ([run](https://github.com/kasanket64-prog/daily-video-bot/actions/runs/41716904942)). All 19 Python and 9 Worker checks pass. Social publishing awaits owner approval and is not yet verified. YouTube currently uploads privately; Instagram authorization is pending.
+Current direction: original children's cartoons. The previous fitness generator is held (`AUTOMATION_ENABLED=false` in Cloudflare), and the old preview was rejected. A new 30-second **Milo & Pip** landscape/vertical style pilot is described in [CARTOON_PILOT.md](CARTOON_PILOT.md). Its manual cloud workflow does not publish or access account credentials. The daily multi-format cartoon workflow is not ready yet. The fitness implementation below is retained as history until replaced.
 
 ## Daily behavior
 
