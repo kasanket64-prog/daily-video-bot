@@ -149,13 +149,18 @@ export async function prepareJob(env, claims) {
     const cached = await env.DB.prepare('SELECT value FROM settings WHERE name=?').bind(cacheKey).first();
     let hits = cached ? JSON.parse(cached.value) : null;
     if (!hits || hits.until < Date.now()) {
-      hits = { until: Date.now() + 86400000, data: (await api(search.toString())).hits };
+      try { hits = { until: Date.now() + 86400000, data: (await api(search.toString())).hits }; }
+      catch (error) {
+        if (error.message !== 'Pixabay HTTP 429') throw error;
+        meta.footage_note = 'Stock service rate-limited; this preview uses original backgrounds.';
+        break;
+      }
       await env.DB.prepare('INSERT OR REPLACE INTO settings(name,value) VALUES(?,?)').bind(cacheKey, JSON.stringify(hits)).run();
     }
     const hit = hits.data.find(h => h.videos?.medium?.url);
     if (hit) meta.materials.push({ url: hit.videos.medium.url, source: hit.pageURL });
   }
-  if (!meta.materials.length) throw new Error('No matching stock footage');
+  if (!meta.materials.length) meta.footage_note ||= 'No matching stock clips; this preview uses original backgrounds.';
   await env.DB.prepare("UPDATE jobs SET status='generating',metadata=? WHERE id=? AND status='preparing'").bind(JSON.stringify(meta), id).run();
   return json({ id, metadata: meta });
   } catch (error) {
@@ -192,6 +197,11 @@ export function allowedApproval(callback, job, env, seconds = Date.now() / 1000)
     String(callback.from?.id) === String(env.TELEGRAM_USER_ID) &&
     String(callback.message?.chat?.id) === String(env.TELEGRAM_CHAT_ID) &&
     callback.message?.chat?.type === 'private' && callback.message?.message_id === job.message_id;
+}
+
+export function uploadsComplete(job, env) {
+  const instagramEnabled = env.INSTAGRAM_ACCESS_TOKEN && env.INSTAGRAM_USER_ID && env.META_API_VERSION;
+  return job.youtube_state === 'uploaded' && (!instagramEnabled || job.instagram_state === 'uploaded');
 }
 
 async function webhook(request, env) {
@@ -281,16 +291,17 @@ async function tick(env) {
       const meta = JSON.parse(job.metadata);
       const localHour = new Date(Date.now() + 19800000).getUTCHours();
       if (job.status === 'ready' && localHour >= 9) {
+        const targets = env.INSTAGRAM_ACCESS_TOKEN && env.INSTAGRAM_USER_ID && env.META_API_VERSION ? 'YouTube and Instagram' : 'YouTube';
         const lock = await env.DB.prepare("UPDATE jobs SET status='notifying' WHERE id=? AND status='ready'").bind(job.id).run();
         if (!lock.meta.changes) continue;
         await telegram(env, 'editMessageCaption', { chat_id: env.TELEGRAM_CHAT_ID, message_id: job.message_id,
-          caption: `${meta.title}\nLanguage: ${meta.language}\nReview before approving. This exact file will upload to both accounts.`,
-          reply_markup: { inline_keyboard: [[{ text: 'Approve both', callback_data: 'approve:' + job.id }, { text: 'Reject', callback_data: 'reject:' + job.id }]] } });
+          caption: `${meta.title}\nLanguage: ${meta.language}\n${meta.footage_note || ''}\nReview before approving. This exact file will upload to ${targets}.`,
+          reply_markup: { inline_keyboard: [[{ text: 'Approve upload', callback_data: 'approve:' + job.id }, { text: 'Reject', callback_data: 'reject:' + job.id }]] } });
         await env.DB.prepare("UPDATE jobs SET status='pending' WHERE id=? AND status='notifying'").bind(job.id).run();
         await message(env, `Your daily preview is ready above.\n${meta.description}\nSources: ${meta.sources.join('\n')}\nStock: ${meta.materials.map(m => m.source).join('\n')}`);
       }
       if (job.status === 'approved') {
-        if (!env.YOUTUBE_REFRESH_TOKEN || !env.INSTAGRAM_ACCESS_TOKEN) {
+        if (!env.YOUTUBE_REFRESH_TOKEN || !env.YOUTUBE_CLIENT_ID || !env.YOUTUBE_CLIENT_SECRET) {
           const saved = await env.DB.prepare('INSERT OR IGNORE INTO settings(name,value) VALUES(?,?)')
             .bind('connections:' + job.id, 'notified').run();
           if (saved.meta.changes) await message(env, 'Approval saved. Publishing accounts are not fully connected yet; completed platforms will not be uploaded twice.');
@@ -298,7 +309,7 @@ async function tick(env) {
         await publishYouTube(env, job, meta);
         await publishInstagram(env, job, meta);
         const latest = await row(env, job.id);
-        if (latest.youtube_state === 'uploaded' && latest.instagram_state === 'uploaded') await env.DB.prepare("UPDATE jobs SET status='published' WHERE id=?").bind(job.id).run();
+        if (uploadsComplete(latest, env)) await env.DB.prepare("UPDATE jobs SET status='published' WHERE id=?").bind(job.id).run();
       }
     } catch {
       // Do not log provider errors containing credentials. Ambiguous upload states are not retried.
@@ -328,7 +339,8 @@ export default {
       if (url.pathname === '/render/job') return await prepareJob(env, claims);
       return await acceptPreview(request, env, claims, url.pathname.split('/').pop());
     } catch (error) {
-      console.warn('Worker operation failed:', /^(Provider|Gemini|Pixabay|Telegram|GoogleOAuth|YouTube|Instagram) HTTP \d{3}$/.test(error.message)
+      const known = ['Invalid language', 'Invalid content', 'Invalid terms', 'Invalid trend', 'No matching stock footage', 'No current trends', 'Trend feed unavailable'];
+      console.warn('Worker operation failed:', known.includes(error.message) || /^(Provider|Gemini|Pixabay|Telegram|GoogleOAuth|YouTube|Instagram) HTTP \d{3}$/.test(error.message)
         ? error.message : 'Content preparation or configuration failed');
       return json({ error: 'Operation failed. Check private configuration and free quotas.' }, 503);
     }

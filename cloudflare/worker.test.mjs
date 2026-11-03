@@ -1,8 +1,36 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import worker, { validateClaims, authenticate, validateMetadata, allowedApproval, parseTrends, prepareJob } from './worker.mjs';
+import worker, { validateClaims, authenticate, validateMetadata, allowedApproval, parseTrends, prepareJob, uploadsComplete } from './worker.mjs';
 
 const env = { REPOSITORY: 'owner/repo', REPOSITORY_ID: '123', OWNER_ID: '456', TELEGRAM_USER_ID: '7', TELEGRAM_CHAT_ID: '7' };
+test('YouTube-only approval completes without uploading to an unconfigured Instagram account', () => {
+  assert.equal(uploadsComplete({ youtube_state: 'uploaded' }, {}), true);
+  assert.equal(uploadsComplete({ youtube_state: 'started' }, {}), false);
+  const instagram = { INSTAGRAM_ACCESS_TOKEN: 'token', INSTAGRAM_USER_ID: '1', META_API_VERSION: 'v1.0' };
+  assert.equal(uploadsComplete({ youtube_state: 'uploaded' }, instagram), false);
+  assert.equal(uploadsComplete({ youtube_state: 'uploaded', instagram_state: 'uploaded' }, instagram), true);
+});
+
+test('stock rate limiting produces an original-background job without hammering the stock API', async () => {
+  const meta = { trend_index: 0, title: 'Daily explainer', language: 'en', script: 'An original explainer script with enough text for validation.',
+    description: 'An original explainer.', terms: ['city', 'nature', 'exercise'] };
+  const DB = { prepare() { return { bind() { return { async first() { return null; }, async run() { return { meta: { changes: 1 } }; } }; } }; } };
+  let stockRequests = 0;
+  const oldFetch = globalThis.fetch;
+  globalThis.fetch = async url => {
+    if (url.includes('trends.google.com')) return new Response('<rss><item><title>Daily topic</title></item></rss>');
+    if (url.includes('generativelanguage.googleapis.com')) return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(meta) }] } }] });
+    assert.equal(new URL(url).hostname, 'pixabay.com');
+    stockRequests++;
+    return new Response('', { status: 429 });
+  };
+  try {
+    const result = await (await prepareJob({ DB, GEMINI_API_KEY: 'private', PIXABAY_API_KEY: 'private' }, { run_id: '1' })).json();
+    assert.deepEqual(result.metadata.materials, []);
+    assert.match(result.metadata.footage_note, /original backgrounds/);
+    assert.equal(stockRequests, 1);
+  } finally { globalThis.fetch = oldFetch; }
+});
 test('failed preparation can retry while completed previews are never reserved again', async () => {
   let job = null, reservations = 0, requests = 0;
   const DB = { prepare(sql) { return { bind(...values) { return {
