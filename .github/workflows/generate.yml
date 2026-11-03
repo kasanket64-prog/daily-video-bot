@@ -27,6 +27,24 @@ jobs:
         run: |
           python -c "from cloud_render import worker_url; worker_url()"
           python -m unittest discover -s tests -v
+      - name: Check cloud connection before installing video tools
+        run: |
+          python -u - <<'PY'
+          from cloud_render import identity, worker_url
+          from bot import APIError, http
+          worker = worker_url()
+          try:
+              print('Checking Worker health')
+              http('GET', worker + '/health')
+              print('Checking GitHub workload identity')
+              token = identity(worker)
+              print('Checking Worker renderer authorization')
+              http('POST', worker + '/render/job', headers={'Authorization': 'Bearer ' + token}, data={})
+              print('Cloud connection accepted')
+          except APIError as error:
+              print(str(error))
+              raise SystemExit(1)
+          PY
       - name: Install video tools and pinned MoneyPrinterTurbo
         run: |
           sudo apt-get update -qq
