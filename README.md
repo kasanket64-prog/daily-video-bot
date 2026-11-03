@@ -6,6 +6,18 @@ Status: cloud automation enabled and Telegram webhook connected. The first live 
 
 ## Daily behavior
 
+### Fit-zee quality workflow
+
+One daily job coordinates five roles: Researcher → Writer → Editor → Inspector → owner approval → Publisher. This is one cloud workflow, not multiple daily video generators. A rejected or failed draft is held; it does not trigger a flood of replacement videos.
+
+The Researcher selects from six reviewed beginner fitness topics with CDC, NHS, or NIDDK source facts. These topics rotate, so the current small catalog repeats every six days. Accuracy takes priority over unrelated trending news. The Writer may paraphrase only those facts into a 40–55-word English/Hindi script. Source links appear in Telegram and the upload description.
+
+The Editor uses fitness-tagged stock clips, two-second cuts, language-specific bold Noto fonts, large yellow word captions and the upstream MoneyPrinterTurbo pop animation. A missing-glyph check prevents square-box captions. If suitable stock is unavailable, an original Fit-zee title card replaces unrelated footage. Music is not added in this revision.
+
+The Inspector checks duration (15–32 seconds), portrait dimensions, an audio stream, six sampled frames and the complete audio. Gemini reviews visual relevance, caption readability, narration/script agreement, opening hook, and support by the supplied source facts. Every check must be explicitly true. Quota errors, uncertain checks and malformed results block delivery. A SHA-256 digest binds approval to the inspected file. AI inspection can still miss errors; the human approval remains required. The inspection sends the generated frames and audio to Gemini through Cloudflare; no provider credentials reach GitHub.
+
+The earlier successful preview was a technical test; it did not meet the new creative standard. The revised workflow still needs a successful live inspection test.
+
 - GitHub starts a standard Linux rendering job around 06:47 India time.
 - It proves its repository/workflow identity to Cloudflare with GitHub OIDC. There is no shared API password in GitHub. Trust is restricted to this repository ID, owner ID, main branch, exact workflow, and scheduled/manual events.
 - Cloudflare reads Indian Google search trends, creates an original English/Hindi script with Gemini, and searches free Pixabay footage. It sends only the script and public media URLs to GitHub.

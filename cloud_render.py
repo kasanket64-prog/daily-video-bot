@@ -1,5 +1,7 @@
 """GitHub renderer: short-lived workload identity, no account tokens."""
 import json
+import base64
+import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -8,6 +10,7 @@ import urllib.parse
 import urllib.request
 import urllib.error
 from bot import APIError, http
+from creative import background_card
 
 ROOT = Path(__file__).resolve().parent
 
@@ -77,9 +80,9 @@ def main():
     local = download_materials(materials, materials_dir)
     if not local:
         destination = materials_dir / 'original-background.mp4'
-        subprocess.run(['ffmpeg', '-y', '-f', 'lavfi', '-i',
-            'color=c=0x14213d:s=720x1280:r=15:d=15', '-vf',
-            'drawgrid=w=120:h=120:t=1:c=0x285c69,zoompan=z=min(zoom+0.0005\\,1.1):d=1:s=720x1280:fps=15',
+        card = out / 'fitzee-card.png'
+        background_card(meta, card)
+        subprocess.run(['ffmpeg', '-y', '-loop', '1', '-i', str(card), '-t', '15', '-r', '15',
             '-c:v', 'libx264', '-pix_fmt', 'yuv420p', str(destination)],
             check=True, stdout=subprocess.DEVNULL)
         local.append(str(destination.resolve()))
@@ -92,6 +95,27 @@ def main():
     video = (out / "video.mp4").read_bytes()
     if not 0 < len(video) <= 19_000_000:
         raise RuntimeError("Preview must be below 19 MB")
+    details = json.loads(subprocess.check_output(['ffprobe', '-v', 'error', '-show_format', '-show_streams',
+        '-of', 'json', str(out / 'video.mp4')]))
+    duration = float(details['format']['duration'])
+    streams = details['streams']
+    visual = next(stream for stream in streams if stream['codec_type'] == 'video')
+    if not 15 <= duration <= 32 or visual['width'] != 720 or visual['height'] != 1280 or not any(stream['codec_type'] == 'audio' for stream in streams):
+        raise RuntimeError('Draft failed duration, portrait format, or audio inspection')
+    frames = []
+    for fraction in (0.04, 0.18, 0.35, 0.52, 0.72, 0.92):
+        frame = subprocess.check_output(['ffmpeg', '-v', 'error', '-ss', str(duration * fraction), '-i', str(out / 'video.mp4'),
+            '-frames:v', '1', '-vf', 'scale=360:640', '-f', 'image2pipe', '-vcodec', 'mjpeg', '-q:v', '4', '-threads', '1', '-'])
+        frames.append(base64.b64encode(frame).decode('ascii'))
+    audio = subprocess.check_output(['ffmpeg', '-v', 'error', '-i', str(out / 'video.mp4'), '-vn', '-ac', '1',
+        '-ar', '16000', '-b:a', '48k', '-f', 'mp3', '-'])
+    inspection = http('POST', worker + '/render/inspect/' + job['id'],
+        headers={'Authorization': 'Bearer ' + identity(worker)}, data={
+            'sha256': hashlib.sha256(video).hexdigest(), 'duration': duration, 'frames': frames,
+            'audio': base64.b64encode(audio).decode('ascii')}, timeout=240)
+    if inspection.get('passed') is not True:
+        raise RuntimeError('Automatic inspection held this draft; no approval request or upload was sent')
+    print('Automatic inspection passed for this exact video.', flush=True)
     http("POST", worker + "/render/preview/" + urllib.parse.quote(job["id"], safe=""),
          headers={"Authorization": "Bearer " + identity(worker), "Content-Type": "video/mp4"}, data=video, timeout=300)
     print("Preview delivered. No account credentials were used by this renderer.")
