@@ -1,0 +1,35 @@
+name: Telegram approval and publishing
+on:
+  schedule:
+    - cron: '0,30 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: daily-video-bot-state
+  cancel-in-progress: false
+jobs:
+  cycle:
+    if: vars.AUTOMATION_ENABLED == 'true' && github.event.repository.private == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      TELEGRAM_USER_ID: ${{ secrets.TELEGRAM_USER_ID }}
+      YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+      YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+      YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+      YOUTUBE_PRIVACY: ${{ vars.YOUTUBE_PRIVACY || 'public' }}
+      INSTAGRAM_USER_ID: ${{ secrets.INSTAGRAM_USER_ID }}
+      INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+      META_API_VERSION: ${{ vars.META_API_VERSION }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python bot.py cycle
