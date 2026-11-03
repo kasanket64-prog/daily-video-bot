@@ -20,10 +20,13 @@ function json(value, status = 200) {
 }
 
 export function validateClaims(claims, env, audience, seconds = Date.now() / 1000) {
+  const [owner, repo] = env.REPOSITORY.split('/');
+  const subjects = [`repo:${env.REPOSITORY}:ref:refs/heads/main`,
+    `repo:${owner}@${env.OWNER_ID}/${repo}@${env.REPOSITORY_ID}:ref:refs/heads/main`];
   if (claims.iss !== issuer || claims.aud !== audience || !Number.isFinite(claims.exp) ||
       claims.exp <= seconds || !Number.isFinite(claims.iat) || claims.iat > seconds + 30 ||
       claims.iat < seconds - 600 || (claims.nbf && claims.nbf > seconds + 30) ||
-      claims.sub !== `repo:${env.REPOSITORY}:ref:refs/heads/main` ||
+      !subjects.includes(claims.sub) ||
       claims.repository !== env.REPOSITORY || claims.repository_id !== env.REPOSITORY_ID ||
       claims.repository_owner_id !== env.OWNER_ID || claims.ref !== 'refs/heads/main' ||
       claims.workflow_ref !== `${env.REPOSITORY}/.github/workflows/generate.yml@refs/heads/main` ||

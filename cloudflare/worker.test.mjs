@@ -11,6 +11,11 @@ function claims() {
 }
 test('workload identity rejects other repos, forks, branches, workflows, subjects, audiences and expired tokens', () => {
   assert.equal(validateClaims(claims(), env, 'https://bot.workers.dev').run_id, '99');
+  assert.equal(validateClaims({ ...claims(), sub: 'repo:owner@456/repo@123:ref:refs/heads/main' }, env, 'https://bot.workers.dev').run_id, '99');
+  for (const sub of ['repo:owner@999/repo@123:ref:refs/heads/main', 'repo:owner@456/repo@999:ref:refs/heads/main',
+    'repo:owner@456/repo@123:ref:refs/heads/other']) {
+    assert.throws(() => validateClaims({ ...claims(), sub }, env, 'https://bot.workers.dev'));
+  }
   for (const [field, value] of [['repository', 'attacker/repo'], ['repository_id', '999'], ['repository_owner_id', '999'],
     ['ref', 'refs/heads/other'], ['workflow_ref', 'owner/repo/.github/workflows/other.yml@refs/heads/main'],
     ['sub', 'repo:attacker/repo:ref:refs/heads/main'], ['aud', 'https://attacker.example'], ['iss', 'https://attacker.example'],
