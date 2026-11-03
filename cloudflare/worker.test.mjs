@@ -27,8 +27,9 @@ test('identity signatures are verified cryptographically', async () => {
   const pair = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
   const jwk = { ...await crypto.subtle.exportKey('jwk', pair.publicKey), kid: 'test-key' };
   const oldFetch = globalThis.fetch;
-  globalThis.fetch = async url => {
+  globalThis.fetch = async (url, init) => {
     assert.equal(url, 'https://token.actions.githubusercontent.com/.well-known/jwks');
+    assert.equal(init.redirect, 'manual');
     return Response.json({ keys: [jwk] });
   };
   try {

@@ -10,7 +10,7 @@ function requireValue(env, key) {
 }
 
 async function api(url, init = {}) {
-  const response = await fetch(url, { ...init, redirect: 'error' });
+  const response = await fetch(url, { ...init, redirect: 'manual' });
   if (!response.ok) throw new Error(`Provider HTTP ${response.status}`);
   return response.json();
 }
@@ -200,7 +200,7 @@ async function webhook(request, env) {
 
 async function media(env, job) {
   const file = await telegram(env, 'getFile', { file_id: job.file_id });
-  const response = await fetch(`https://api.telegram.org/file/bot${env.TELEGRAM_BOT_TOKEN}/${file.file_path}`, { redirect: 'error' });
+  const response = await fetch(`https://api.telegram.org/file/bot${env.TELEGRAM_BOT_TOKEN}/${file.file_path}`, { redirect: 'manual' });
   if (!response.ok) throw new Error('Preview unavailable');
   return response;
 }
@@ -215,7 +215,7 @@ async function publishYouTube(env, job, meta) {
   const reserve = await env.DB.prepare("UPDATE jobs SET youtube_state='started' WHERE id=? AND status='approved' AND youtube_state IS NULL").bind(job.id).run();
   if (!reserve.meta.changes) return;
   const session = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status', {
-    method: 'POST', redirect: 'error', headers: { ...auth, 'Content-Type': 'application/json', 'X-Upload-Content-Type': 'video/mp4', 'X-Upload-Content-Length': String(job.size) },
+    method: 'POST', redirect: 'manual', headers: { ...auth, 'Content-Type': 'application/json', 'X-Upload-Content-Type': 'video/mp4', 'X-Upload-Content-Length': String(job.size) },
     body: JSON.stringify({ snippet: { title: meta.title, description: meta.description, categoryId: '22', defaultLanguage: meta.language }, status: { privacyStatus: privacy, selfDeclaredMadeForKids: false } }) });
   if (!session.ok) throw new Error('YouTube session failed');
   const location = new URL(session.headers.get('Location'));
@@ -307,7 +307,13 @@ export default {
       if (url.pathname === '/telegram' && request.method === 'POST') return await webhook(request, env);
       if (request.method !== 'POST' || !/^\/render\/(job|preview\/\d{4}-\d{2}-\d{2})$/.test(url.pathname)) return json({ error: 'Not found' }, 404);
       let claims;
-      try { claims = await authenticate(request, env); } catch { return json({ error: 'Renderer not authorized' }, 403); }
+      try { claims = await authenticate(request, env); } catch (error) {
+        const known = ['Missing renderer identity', 'Invalid identity token', 'Invalid signature algorithm',
+          'Unknown signing key; retry with a fresh token', 'Invalid identity signature', 'Renderer identity denied'];
+        console.warn('Renderer identity rejected:', known.includes(error.message) || /^Provider HTTP \d{3}$/.test(error.message)
+          ? error.message : 'Identity verification failed');
+        return json({ error: 'Renderer not authorized' }, 403);
+      }
       if (url.pathname === '/render/job') return await prepareJob(env, claims);
       return await acceptPreview(request, env, claims, url.pathname.split('/').pop());
     } catch {
