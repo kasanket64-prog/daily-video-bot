@@ -32,15 +32,12 @@ jobs:
           python -u - <<'PY'
           from cloud_render import identity, worker_url
           from bot import APIError, http
-          import base64, json
           worker = worker_url()
           try:
               print('Checking Worker health')
               http('GET', worker + '/health')
               print('Checking GitHub workload identity')
               token = identity(worker)
-              part = token.split('.')[1]
-              print('Repository identity subject:', json.loads(base64.urlsafe_b64decode(part + '=' * (-len(part) % 4))).get('sub'))
               print('Checking Worker renderer authorization')
               http('POST', worker + '/render/job', headers={'Authorization': 'Bearer ' + token}, data={})
               print('Cloud connection accepted')
