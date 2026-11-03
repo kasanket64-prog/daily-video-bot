@@ -55,12 +55,20 @@ def main():
     out.mkdir(exist_ok=True)
     meta = job["metadata"]
     materials = meta.get("materials")
-    if not isinstance(materials, list) or not 1 <= len(materials) <= 3:
+    if not isinstance(materials, list) or not 0 <= len(materials) <= 3:
         raise RuntimeError("Invalid render materials")
     local = []
     for index, material in enumerate(materials):
         destination = out / f"clip-{index}.mp4"
         download_stock(material["url"], destination)
+        local.append(str(destination.resolve()))
+    if not local:
+        destination = out / 'original-background.mp4'
+        subprocess.run(['ffmpeg', '-y', '-f', 'lavfi', '-i',
+            'color=c=0x14213d:s=720x1280:r=15:d=15', '-vf',
+            'drawgrid=w=120:h=120:t=1:c=0x285c69,zoompan=z=min(zoom+0.0005\\,1.1):d=1:s=720x1280:fps=15',
+            '-c:v', 'libx264', '-pix_fmt', 'yuv420p', str(destination)],
+            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         local.append(str(destination.resolve()))
     meta["local_materials"] = local
     (out / "metadata.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")

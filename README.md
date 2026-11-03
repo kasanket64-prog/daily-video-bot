@@ -2,17 +2,18 @@
 
 This revision uses **Cloudflare Workers Free + D1 Free** for private configuration, script preparation, Telegram approval, job state, and publishing. GitHub Actions only renders video. No account token or provider key is configured as a GitHub Secret or sent to its runner.
 
-Status: code prepared and offline checks passed. This revision is not activated; real video generation, Worker runtime limits, Telegram, and social publishing still require live testing with your privately configured accounts.
+Status: cloud automation enabled and Telegram webhook connected. Offline checks pass; the first live render and social publishing are still being verified. Instagram authorization is pending.
 
 ## Daily behavior
 
 - GitHub starts a standard Linux rendering job around 06:47 India time.
 - It proves its repository/workflow identity to Cloudflare with GitHub OIDC. There is no shared API password in GitHub. Trust is restricted to this repository ID, owner ID, main branch, exact workflow, and scheduled/manual events.
 - Cloudflare reads Indian Google search trends, creates an original English/Hindi script with Gemini, and searches free Pixabay footage. It sends only the script and public media URLs to GitHub.
+- If Pixabay is rate-limited or has no matching clips, the renderer creates an original background with narration and captions. Approval identifies this fallback; no paid stock service is used.
 - MoneyPrinterTurbo renders with local clips and free Edge speech. GitHub sends the finished file directly to Cloudflare. No workflow artifact or account credential is stored in GitHub.
 - A silent Telegram preview is prepared earlier in the morning. At the first Cloudflare five-minute check at/after 09:00 India time, approval buttons are attached and a notification is sent. Exact delivery time is not guaranteed by the free schedules.
-- Approve both saves approval for that exact Telegram file. Cloudflare checks the owner, private chat, message ID, expiry and pending status. Rejection or no approval prevents publication.
-- Cloudflare uploads independently to YouTube and Instagram. A started/interrupted upload is held for inspection to avoid duplicates. Instagram may take another five-minute check to finish processing.
+- Approve upload saves approval for that exact Telegram file and names the configured destinations. Cloudflare checks the owner, private chat, message ID, expiry and pending status. Rejection or no approval prevents publication.
+- Cloudflare uploads independently to YouTube and, when configured, Instagram. YouTube-only jobs finish without waiting for Instagram. A started/interrupted upload is held for inspection to avoid duplicates. Instagram may take another five-minute check to finish processing.
 - Previews expire after 40 hours. Video files must remain below 19 MB so the free Telegram file API can retrieve them for publication. This implementation is for short nonsensitive clips intended for public posting.
 
 Your computer can stay off after setup. The earlier polling implementation in bot.py is superseded; active workflows do not invoke its account-handling functions. Its HTTP transport is reused by cloud_render.py.
@@ -67,7 +68,7 @@ Large video transfers, memory use, cryptographic validation and uploads need a r
 
 D1 stores private job metadata and Telegram file/message IDs. Worker Secrets store account credentials. Public health returns only service name and enabled status. Provider errors are sanitized; observability is disabled by default. Job failures are reported to the owner's Telegram when reachable. Missing credentials keep publication waiting.
 
-Inspect jobs left in sending_preview, notifying, started, or publishing states before retrying: the external operation may already have succeeded. Do not clear successful platform IDs. Pause both AUTOMATION_ENABLED switches before manually repairing state. A failed generation reservation prevents duplicate attempts on the same day and needs inspection; there is no automatic loop consuming AI quota.
+Inspect jobs left in sending_preview, notifying, started, or publishing states before retrying: the external operation may already have succeeded. Do not clear successful platform IDs. Pause both AUTOMATION_ENABLED switches before manually repairing state. Failed preparation with no metadata or video can be retried explicitly; there is no automatic loop consuming AI quota.
 
 The Worker authenticates to a fixed repository subject of repo:OWNER/REPO:ref:refs/heads/main. If your GitHub organization enables a different OIDC subject format, update and test the explicit allowlist; do not remove subject/owner/repository checks.
 
