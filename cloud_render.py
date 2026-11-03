@@ -6,7 +6,7 @@ import subprocess
 import sys
 import urllib.parse
 import urllib.request
-from bot import http
+from bot import APIError, http
 
 ROOT = Path(__file__).resolve().parent
 
@@ -79,5 +79,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as error:
+        if isinstance(error, APIError):
+            print(str(error))  # The HTTP helper exposes only status codes, never provider bodies or URLs.
         print(f"Render stopped: {type(error).__name__}. Check Worker configuration, free quotas, and Actions setup.")
         raise SystemExit(1)
