@@ -79,13 +79,14 @@ def main():
             'color=c=0x14213d:s=720x1280:r=15:d=15', '-vf',
             'drawgrid=w=120:h=120:t=1:c=0x285c69,zoompan=z=min(zoom+0.0005\\,1.1):d=1:s=720x1280:fps=15',
             '-c:v', 'libx264', '-pix_fmt', 'yuv420p', str(destination)],
-            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            check=True, stdout=subprocess.DEVNULL)
         local.append(str(destination.resolve()))
     meta["local_materials"] = local
     (out / "metadata.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
     (ROOT / "mpt/config.toml").write_text('[app]\nsubtitle_provider="edge"\nupload_post_enabled=false\nupload_post_auto_upload=false\n', encoding="utf-8")
+    print("Starting credential-free video renderer.", flush=True)
     subprocess.run([sys.executable, str(ROOT / "render_cloud.py")], cwd=ROOT / "mpt", check=True,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3300)
+                   timeout=3300)
     video = (out / "video.mp4").read_bytes()
     if not 0 < len(video) <= 19_000_000:
         raise RuntimeError("Preview must be below 19 MB")
