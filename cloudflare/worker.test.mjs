@@ -1,6 +1,50 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import worker, { validateClaims, authenticate, validateMetadata, allowedApproval, parseTrends, prepareJob, uploadsComplete } from './worker.mjs';
+import worker, { validateClaims, authenticate, validateMetadata, allowedApproval, parseTrends, prepareJob, uploadsComplete, fitnessTrends, selectFitnessClip, inspectionPassed, acceptPreview } from './worker.mjs';
+
+test('inspector requires every explicit check and never treats missing or string checks as passed', () => {
+  const checks = { facts_supported: true, visuals_relevant: true, captions_readable: true, narration_matches: true, hook_clear: true };
+  assert.equal(inspectionPassed(checks), true);
+  for (const key of Object.keys(checks)) {
+    assert.equal(inspectionPassed({ ...checks, [key]: false }), false);
+    assert.equal(inspectionPassed({ ...checks, [key]: 'true' }), false);
+    const incomplete = { ...checks }; delete incomplete[key];
+    assert.equal(inspectionPassed(incomplete), false);
+  }
+  assert.equal(inspectionPassed(null), false);
+});
+
+test('preview cannot bypass inspection or substitute a different video after inspection', async () => {
+  const data = new TextEncoder().encode('different video');
+  let mutations = 0;
+  for (const inspection of [undefined, { passed: false }, { passed: true, sha256: 'a'.repeat(64) }]) {
+    const job = { run_id: '1', status: 'generating', expires: Date.now() / 1000 + 1000, metadata: JSON.stringify({ inspection }) };
+    const DB = { prepare() { return { bind() { return { async first() { return job; }, async run() { mutations++; } }; } }; } };
+    const request = new Request('https://example.com/render/preview/2026-11-04', { method: 'POST', headers: { 'Content-Length': String(data.length) }, body: data });
+    assert.equal((await acceptPreview(request, { DB }, { run_id: '1' }, '2026-11-04')).status, 409);
+  }
+  assert.equal(mutations, 0);
+});
+
+test('Fit-zee ignores unrelated news and chooses a practical fitness topic', () => {
+  const fallback = fitnessTrends([{ title: 'Bayern Munich', sources: ['https://example.com'] }], '2026-11-04');
+  assert.equal(fallback.length, 1);
+  assert.ok(fallback[0].sources[0].startsWith('https://www.'));
+  assert.ok(fallback[0].facts.length > 30);
+  assert.notEqual(fallback[0].title, 'Bayern Munich');
+  const fitness = [{ title: 'Walking exercise', sources: [] }];
+  assert.notEqual(fitnessTrends(fitness)[0].title, 'Walking exercise');
+});
+
+test('footage matching rejects dogs, unrelated landscapes, and duplicate clips', () => {
+  const hit = (tags, url) => ({ tags, videos: { medium: { url, width: 720, height: 1280 } } });
+  const dog = hit('dog, training, exercise', 'https://cdn.pixabay.com/dog.mp4');
+  const city = hit('city, landscape, Munich', 'https://cdn.pixabay.com/city.mp4');
+  const squat = hit('squat, fitness, gym', 'https://cdn.pixabay.com/squat.mp4');
+  assert.equal(selectFitnessClip([dog, city, squat], 'squat exercise'), squat);
+  assert.equal(selectFitnessClip([dog, city], 'exercise'), undefined);
+  assert.equal(selectFitnessClip([squat], 'squat exercise', new Set([squat.videos.medium.url])), undefined);
+});
 
 const env = { REPOSITORY: 'owner/repo', REPOSITORY_ID: '123', OWNER_ID: '456', TELEGRAM_USER_ID: '7', TELEGRAM_CHAT_ID: '7' };
 test('YouTube-only approval completes without uploading to an unconfigured Instagram account', () => {
