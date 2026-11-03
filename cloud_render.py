@@ -6,6 +6,7 @@ import subprocess
 import sys
 import urllib.parse
 import urllib.request
+import urllib.error
 from bot import APIError, http
 
 ROOT = Path(__file__).resolve().parent
@@ -38,11 +39,25 @@ class StockRedirect(urllib.request.HTTPRedirectHandler):
 
 def download_stock(url, path):
     validate_stock_url(url)
-    with urllib.request.build_opener(StockRedirect()).open(url, timeout=90) as response:
+    request = urllib.request.Request(url, headers={"User-Agent": "daily-video-bot/1.0"})
+    with urllib.request.build_opener(StockRedirect()).open(request, timeout=90) as response:
         data = response.read(60_000_001)
     if len(data) > 60_000_000:
         raise RuntimeError("Stock clip exceeds the free render size limit")
     path.write_bytes(data)
+
+
+def download_materials(materials, out):
+    local = []
+    for index, material in enumerate(materials):
+        destination = out / f"clip-{index}.mp4"
+        try:
+            download_stock(material["url"], destination)
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError):
+            print('Stock clip unavailable; continuing with available clips or an original background.')
+            continue
+        local.append(str(destination.resolve()))
+    return local
 
 
 def main():
@@ -57,11 +72,7 @@ def main():
     materials = meta.get("materials")
     if not isinstance(materials, list) or not 0 <= len(materials) <= 3:
         raise RuntimeError("Invalid render materials")
-    local = []
-    for index, material in enumerate(materials):
-        destination = out / f"clip-{index}.mp4"
-        download_stock(material["url"], destination)
-        local.append(str(destination.resolve()))
+    local = download_materials(materials, out)
     if not local:
         destination = out / 'original-background.mp4'
         subprocess.run(['ffmpeg', '-y', '-f', 'lavfi', '-i',
