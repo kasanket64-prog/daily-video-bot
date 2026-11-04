@@ -1,0 +1,32 @@
+name: Inspect existing rhyme lyrics on CPU
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: pip-cpu-rhyme-benchmark
+          run-id: '41806600631'
+          github-token: ${{ github.token }}
+          path: existing-rhyme
+      - name: Install open-source speech recognizer
+        run: python -m pip install faster-whisper==1.2.1
+      - name: Inspect existing song without regeneration
+        run: python inspect_music.py existing-rhyme
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pip-lyric-inspection
+          path: music-inspection-output/
+          retention-days: 3
