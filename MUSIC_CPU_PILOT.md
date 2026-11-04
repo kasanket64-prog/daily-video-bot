@@ -14,9 +14,14 @@ duration, peak amplitude, elapsed time and peak process memory when Python can
 finish writing it. `process-resources.txt` also records process resource use.
 An OOM kill or job timeout can prevent a complete report or artifact.
 
-Model download, dependency installation and inference have not yet been tested
-on the cloud runner. Upstream specifies about 10 GB of core models; disk and
-16 GB RAM may be insufficient. This is a feasibility test, not a daily service.
+Cloud benchmark succeeded on 2026-11-04:
+https://github.com/kasanket64-prog/daily-video-bot/actions/runs/41806600631
+Model download, installation and CPU inference completed. The output is ten
+seconds at 48 kHz; Python measured 101.33 seconds including loading/downloads,
+and 14,260 MiB peak resident memory. The complete job took about three minutes.
+No GPU or personal credentials were used. Singing quality and exact lyrics
+have not been reviewed. Memory is close to the standard runner limit; longer
+generation remains untested. This is a feasibility test, not a daily service.
 Weights are downloaded by upstream; their revisions are not pinned by this
 prototype. Installed dependency versions also need recording from a successful
 run before treating this as reproducible production infrastructure.
