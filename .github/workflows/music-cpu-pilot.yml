@@ -1,0 +1,48 @@
+name: Benchmark original rhyme on CPU
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: music-cpu-pilot
+  cancel-in-progress: false
+jobs:
+  pilot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      CUDA_VISIBLE_DEVICES: ''
+      ACESTEP_INIT_LLM: 'false'
+      HF_HUB_DISABLE_IMPLICIT_TOKEN: '1'
+      HF_HUB_DISABLE_TELEMETRY: '1'
+      ACESTEP_CHECKPOINTS_DIR: ${{ runner.temp }}/ace-checkpoints
+      HF_HOME: ${{ runner.temp }}/hf-cache
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fetch reviewed upstream source
+        run: |
+          git init "$RUNNER_TEMP/ace-step"
+          git -C "$RUNNER_TEMP/ace-step" remote add origin https://github.com/ace-step/ACE-Step-1.5.git
+          git -C "$RUNNER_TEMP/ace-step" fetch --depth 1 origin ca1e85fe9430179831e6bc6be790c332190a3866
+          git -C "$RUNNER_TEMP/ace-step" checkout --detach FETCH_HEAD
+      - name: Install CPU runtime
+        run: |
+          python -m pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cpu
+          python music_cpu_setup.py "$RUNNER_TEMP/ace-step"
+      - name: Generate one ten-second rhyme
+        timeout-minutes: 30
+        run: |
+          mkdir -p music-pilot-output
+          /usr/bin/time -v -o music-pilot-output/process-resources.txt python -u music_cpu_pilot.py --source "$RUNNER_TEMP/ace-step"
+      - name: Save audio and benchmark for inspection
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-cpu-rhyme-benchmark
+          path: music-pilot-output/
+          retention-days: 3
