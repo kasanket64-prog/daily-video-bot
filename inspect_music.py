@@ -9,6 +9,23 @@ def words(text):
     return re.findall(r"[a-z]+", text.lower())
 
 
+def decode_audio(path):
+    import av
+    import numpy as np
+    resampler = av.AudioResampler(format="fltp", layout="mono", rate=16000)
+    chunks = []
+    with av.open(str(path)) as container:
+        for frame in container.decode(audio=0):
+            chunks.extend(part.to_ndarray().reshape(-1) for part in resampler.resample(frame))
+        chunks.extend(part.to_ndarray().reshape(-1) for part in resampler.resample(None))
+    if not chunks:
+        raise ValueError("No decoded audio")
+    samples = np.concatenate(chunks)
+    if not np.isfinite(samples).all():
+        raise ValueError("Non-finite audio samples")
+    return samples
+
+
 def main():
     from faster_whisper import WhisperModel
     parser = argparse.ArgumentParser()
@@ -19,7 +36,7 @@ def main():
     if len(audio_files) != 1:
         raise ValueError("Expected exactly one WAV in the existing benchmark artifact")
     model = WhisperModel("base.en", device="cpu", compute_type="int8")
-    segments, _ = model.transcribe(str(audio_files[0]), language="en", beam_size=5,
+    segments, _ = model.transcribe(decode_audio(audio_files[0]), language="en", beam_size=5,
                                   word_timestamps=True, vad_filter=False,
                                   condition_on_previous_text=False)
     spans = [{"start": s.start, "end": s.end, "text": s.text,
