@@ -35,7 +35,7 @@ def main():
     audio_files = list(args.audio_dir.glob("*.wav"))
     if len(audio_files) != 1:
         raise ValueError("Expected exactly one WAV in the existing benchmark artifact")
-    model = WhisperModel("base.en", device="cpu", compute_type="int8")
+    model = WhisperModel("small.en", device="cpu", compute_type="int8")
     segments, _ = model.transcribe(decode_audio(audio_files[0]), language="en", beam_size=5,
                                   word_timestamps=True, vad_filter=False,
                                   condition_on_previous_text=False)
@@ -45,7 +45,8 @@ def main():
              for s in segments]
     expected = "Wings go up, wings go down, Little Pip stays on the ground."
     transcript = " ".join(s["text"].strip() for s in spans)
-    report = {"expected": expected, "transcript": transcript, "segments": spans,
+    report = {"recognizer": "faster-whisper small.en CPU int8",
+              "expected": expected, "transcript": transcript, "segments": spans,
               "exact_normalized_match": words(transcript) == words(expected),
               "status": "requires_human_listening",
               "limitation": "ASR can mishear singing; this does not verify musical quality or lip sync."}
