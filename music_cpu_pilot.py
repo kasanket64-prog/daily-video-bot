@@ -8,7 +8,8 @@ import resource
 import time
 
 
-LYRICS = "[Verse]\nWings go up, wings go down,\nLittle Pip stays on the ground."
+LYRICS = ("[Verse]\nWings go up, wings go down,\nLittle Pip stays on the ground.\n"
+          "[Chorus]\nWings go up, wings go down,\nLittle Pip stays on the ground.")
 
 
 def main():
@@ -20,7 +21,7 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     report = {"status": "failed", "device": "cpu", "lyrics": LYRICS,
-              "requested_seconds": 10, "lyric_accuracy": "not checked"}
+              "requested_seconds": 20, "lyric_accuracy": "not checked"}
     try:
         import sys
         sys.path.insert(0, str(args.source.resolve()))
@@ -43,14 +44,16 @@ def main():
         if not ready:
             raise RuntimeError(message)
         params = GenerationParams(
-            caption="Original cheerful preschool rhyme, clear warm female singing, "
-                    "ukulele and soft glockenspiel, gentle percussion, immediate vocals",
-            lyrics=LYRICS, vocal_language="en", bpm=96, duration=10,
+            caption="English nursery rhyme sung clearly by one warm adult female lead vocalist. "
+                    "Vocals very prominent, every lyric distinctly articulated, simple melody. "
+                    "Very quiet glockenspiel accompaniment. Singing starts immediately. "
+                    "Sing the verse and chorus exactly as written. No instrumental intro or solo.",
+            lyrics=LYRICS, vocal_language="en", bpm=96, duration=20,
             inference_steps=8, thinking=False, use_cot_metas=False,
             use_cot_caption=False, use_cot_lyrics=False, use_cot_language=False,
         )
         config = GenerationConfig(batch_size=1, audio_format="wav",
-                                  use_random_seed=False, seeds=[42])
+                                  use_random_seed=False, seeds=[43])
         result = generate_music(handler, None, params, config, save_dir=str(output))
         if not result.success or len(result.audios) != 1:
             raise RuntimeError(result.error or "Expected exactly one generated audio file")
@@ -62,7 +65,7 @@ def main():
             raise RuntimeError("Invalid generated audio")
         duration = len(samples) / rate
         peak = float(np.abs(samples).max())
-        if not 9 <= duration <= 11 or peak < 0.0001:
+        if not 19 <= duration <= 21 or peak < 0.0001:
             raise RuntimeError("Output is silent or has unexpected duration")
         report.update(status="generated_unreviewed", audio=path.name,
                       duration=duration, sample_rate=rate, peak=peak)
