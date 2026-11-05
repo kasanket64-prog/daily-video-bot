@@ -65,10 +65,16 @@ jobs:
           python short_candidates.py trend-snapshot.json "$RUNNER_TEMP/reviewed-sources.json" \
             "$RUNNER_TEMP/short-history.json" --summary \
             --render-dir "$RUNNER_TEMP/short-draft" "${delivery[@]}" > short-selection.json
+      - name: Look for open footage when no reviewed clip was selected
+        run: |
+          if [[ ! -f short-selection.json || "$(cat short-selection.json)" == 'null' ]]; then
+            python footage_scout.py --snapshot trend-snapshot.json > footage-leads.json
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: trend-snapshot
           path: |
             trend-snapshot.json
             short-selection.json
+            footage-leads.json
           retention-days: 7
