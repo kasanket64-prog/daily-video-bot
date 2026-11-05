@@ -26,6 +26,45 @@ test('preview cannot bypass inspection or substitute a different video after ins
   assert.equal(mutations, 0);
 });
 
+test('an inspected test preview notifies Telegram once and cannot be approved', async () => {
+  const id = '2026-11-04-short-test';
+  const data = new TextEncoder().encode('inspected video');
+  const sha256 = Buffer.from(await crypto.subtle.digest('SHA-256', data)).toString('hex');
+  const job = { run_id: '1', status: 'generating', expires: Date.now() / 1000 + 1000,
+    metadata: JSON.stringify({ inspection: { passed: true, sha256 } }) };
+  const DB = { prepare(sql) { return { bind(...values) { return {
+    async first() { return job; },
+    async run() {
+      if (sql.includes("SET status='sending_preview'")) job.status = 'sending_preview';
+      else [job.status, job.file_id, job.message_id] = values;
+      return { meta: { changes: 1 } };
+    }
+  }; } }; } };
+  let sends = 0;
+  const oldFetch = globalThis.fetch;
+  globalThis.fetch = async (url, { body }) => {
+    assert.equal(url, 'https://api.telegram.org/botprivate/sendVideo');
+    assert.equal(body.get('chat_id'), '7');
+    assert.equal(body.has('reply_markup'), false);
+    assert.equal(body.has('disable_notification'), false);
+    assert.match(body.get('caption'), /cannot be published/);
+    sends++;
+    return Response.json({ ok: true, result: { video: { file_id: 'file' }, message_id: 42 } });
+  };
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const request = new Request('https://bot.workers.dev/render/preview/' + id,
+        { method: 'POST', headers: { 'Content-Length': String(data.length) }, body: data });
+      assert.deepEqual(await (await acceptPreview(request, { ...env, DB, TELEGRAM_BOT_TOKEN: 'private' },
+        { run_id: '1' }, id)).json(), { received: true });
+    }
+    assert.equal(sends, 1);
+    assert.equal(job.status, 'test_sent');
+    const callback = { from: { id: 7 }, message: { chat: { id: 7, type: 'private' }, message_id: 42 } };
+    assert.equal(allowedApproval(callback, job, env), false);
+  } finally { globalThis.fetch = oldFetch; }
+});
+
 test('Fit-zee ignores unrelated news and chooses a practical fitness topic', () => {
   const fallback = fitnessTrends([{ title: 'Bayern Munich', sources: ['https://example.com'] }], '2026-11-04');
   assert.equal(fallback.length, 1);
@@ -131,12 +170,34 @@ test('identity signatures are verified cryptographically', async () => {
   };
   try {
     const base = value => Buffer.from(JSON.stringify(value)).toString('base64url');
-    const input = base({ alg: 'RS256', kid: 'test-key' }) + '.' + base(claims());
-    const signature = Buffer.from(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', pair.privateKey, new TextEncoder().encode(input))).toString('base64url');
-    const request = token => new Request('https://bot.workers.dev/render/job', { method: 'POST', headers: { Authorization: 'Bearer ' + token } });
-    assert.equal((await authenticate(request(input + '.' + signature), env)).run_id, '99');
+    const sign = async payload => {
+      const input = base({ alg: 'RS256', kid: 'test-key' }) + '.' + base(payload);
+      const signature = Buffer.from(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', pair.privateKey, new TextEncoder().encode(input))).toString('base64url');
+      return input + '.' + signature;
+    };
+    const token = await sign(claims());
+    const request = (token, path = '/render/job') => new Request('https://bot.workers.dev' + path,
+      { method: 'POST', headers: { Authorization: 'Bearer ' + token } });
+    assert.equal((await authenticate(request(token), env)).run_id, '99');
+    const input = token.slice(0, token.lastIndexOf('.'));
     await assert.rejects(authenticate(request(input + '.' + Buffer.alloc(256).toString('base64url')), env));
     await assert.rejects(authenticate(request(base({ alg: 'none' }) + '.' + base(claims()) + '.x'), env));
+
+    const DB = { prepare: () => ({ all: async () => ({ results: [] }) }) };
+    const testEnv = { ...env, DB, SHORT_PREVIEW_TEST: 'true', AUTOMATION_ENABLED: 'true',
+      TELEGRAM_BOT_TOKEN: 'private', TELEGRAM_WEBHOOK_SECRET: 'private' };
+    const shortClaims = { ...claims(), workflow_ref: 'owner/repo/.github/workflows/trend-scout.yml@refs/heads/main' };
+    const manual = await sign({ ...shortClaims, event_name: 'workflow_dispatch' });
+    assert.equal((await worker.fetch(request(token), testEnv)).status, 403);
+    assert.equal((await worker.fetch(request(await sign(shortClaims), '/render/short-history'), testEnv)).status, 403);
+    assert.equal((await worker.fetch(request(manual, '/render/preview/2026-11-04-short'), testEnv)).status, 403);
+    assert.equal((await worker.fetch(request(manual, '/render/preview/2026-11-04-short-test'),
+      { ...testEnv, SHORT_PREVIEW_TEST: 'false' })).status, 403);
+    assert.equal((await worker.fetch(request(manual, '/telegram'), testEnv)).status, 404);
+    assert.deepEqual(await (await worker.fetch(request(manual, '/render/short-history'), testEnv)).json(), []);
+    let tick;
+    await worker.scheduled(null, testEnv, { waitUntil(promise) { tick = promise; } });
+    await tick;
   } finally { globalThis.fetch = oldFetch; }
 });
 test('only the owner can approve an exact, unexpired pending private preview', () => {

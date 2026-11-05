@@ -221,7 +221,7 @@ async function prepareShort(request, env, claims) {
       [title, hook, story, credit, category].some(value => typeof value !== 'string' || !value.trim() || value.length > 600)) {
     return json({ error: 'Invalid Short metadata' }, 400);
   }
-  const id = day() + '-short';
+  const id = day() + (env.SHORT_PREVIEW_TEST === 'true' ? '-short-test' : '-short');
   const source = 'https://www.youtube.com/watch?v=' + source_id.slice(8);
   const meta = { title: title.slice(0, 100), description: `${story}\nFootage credit: ${credit}\nSource: ${source}`,
     language: /[\u0900-\u097f]/.test(hook) ? 'hi' : 'en', hook, source_facts: story,
@@ -290,7 +290,7 @@ export async function inspectDraft(request, env, claims, id) {
 export async function acceptPreview(request, env, claims, id) {
   let job = await row(env, id);
   if (!job || job.run_id !== claims.run_id) return json({ error: 'Unknown render job' }, 403);
-  if (['ready', 'pending', 'approved', 'published'].includes(job.status)) return json({ received: true });
+  if (['ready', 'pending', 'approved', 'published', 'test_sent'].includes(job.status)) return json({ received: true });
   if (job.status !== 'generating' || job.expires < Date.now() / 1000) return json({ error: 'Job not accepting a preview' }, 409);
   const size = Number(request.headers.get('Content-Length'));
   if (!Number.isInteger(size) || size < 1 || size > MAX_VIDEO) return json({ error: 'Video must be below 19 MB' }, 413);
@@ -303,12 +303,14 @@ export async function acceptPreview(request, env, claims, id) {
   if (!acquired.meta.changes) return json({ error: 'Already processing' }, 409);
   const form = new FormData();
   form.set('chat_id', requireValue(env, 'TELEGRAM_CHAT_ID'));
-  form.set('disable_notification', 'true');
-  form.set('caption', `Preparing ${id}. Approval buttons will arrive around 9 AM India time.`);
+  const testPreview = id.endsWith('-short-test');
+  if (!testPreview) form.set('disable_notification', 'true');
+  form.set('caption', testPreview ? 'Shorts delivery test. This preview cannot be published.' :
+    `Preparing ${id}. Approval buttons will arrive around 9 AM India time.`);
   form.set('video', new Blob([data], { type: 'video/mp4' }), 'preview.mp4');
   const sent = await telegram(env, 'sendVideo', form);
-  await env.DB.prepare("UPDATE jobs SET status='ready',file_id=?,message_id=?,size=? WHERE id=?")
-    .bind(sent.video.file_id, sent.message_id, size, id).run();
+  await env.DB.prepare("UPDATE jobs SET status=?,file_id=?,message_id=?,size=? WHERE id=?")
+    .bind(testPreview ? 'test_sent' : 'ready', sent.video.file_id, sent.message_id, size, id).run();
   return json({ received: true });
 }
 
@@ -396,7 +398,7 @@ async function publishInstagram(env, job, meta) {
 }
 
 async function tick(env) {
-  if (env.AUTOMATION_ENABLED !== 'true' || !env.DB || !env.TELEGRAM_BOT_TOKEN || !env.WORKER_URL || !env.TELEGRAM_WEBHOOK_SECRET) return;
+  if (env.SHORT_PREVIEW_TEST === 'true' || env.AUTOMATION_ENABLED !== 'true' || !env.DB || !env.TELEGRAM_BOT_TOKEN || !env.WORKER_URL || !env.TELEGRAM_WEBHOOK_SECRET) return;
   const info = await telegram(env, 'getWebhookInfo', {});
   if (info.url !== env.WORKER_URL + '/telegram') await telegram(env, 'setWebhook', {
     url: env.WORKER_URL + '/telegram', secret_token: env.TELEGRAM_WEBHOOK_SECRET, allowed_updates: ['callback_query'] });
@@ -443,11 +445,13 @@ async function tick(env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname === '/health' && request.method === 'GET') return json({ service: 'daily-video-approvals', enabled: env.AUTOMATION_ENABLED === 'true' });
+    const previewTest = env.SHORT_PREVIEW_TEST === 'true';
+    const enabled = env.AUTOMATION_ENABLED === 'true' && !previewTest;
+    if (url.pathname === '/health' && request.method === 'GET') return json({ service: 'daily-video-approvals', enabled });
     try {
-      if (env.AUTOMATION_ENABLED !== 'true') return json({ error: 'Automation is disabled' }, 503);
-      if (url.pathname === '/telegram' && request.method === 'POST') return await webhook(request, env);
-      if (request.method !== 'POST' || !/^\/render\/(job|short|short-inputs|short-history|(preview|inspect)\/\d{4}-\d{2}-\d{2}(?:-short)?)$/.test(url.pathname)) return json({ error: 'Not found' }, 404);
+      if (!enabled && !previewTest) return json({ error: 'Automation is disabled' }, 503);
+      if (enabled && url.pathname === '/telegram' && request.method === 'POST') return await webhook(request, env);
+      if (request.method !== 'POST' || !/^\/render\/(job|short|short-inputs|short-history|(preview|inspect)\/\d{4}-\d{2}-\d{2}(?:-short(?:-test)?)?)$/.test(url.pathname)) return json({ error: 'Not found' }, 404);
       let claims;
       try { claims = await authenticate(request, env); } catch (error) {
         const known = ['Missing renderer identity', 'Invalid identity token', 'Invalid signature algorithm',
@@ -456,9 +460,13 @@ export default {
           ? error.message : 'Identity verification failed');
         return json({ error: 'Renderer not authorized' }, 403);
       }
-      const shortRoute = ['/render/short', '/render/short-inputs', '/render/short-history'].includes(url.pathname) || url.pathname.endsWith('-short');
+      const testJobRoute = url.pathname.endsWith('-short-test');
+      const shortRoute = ['/render/short', '/render/short-inputs', '/render/short-history'].includes(url.pathname) ||
+        url.pathname.endsWith('-short') || testJobRoute;
       const shortWorkflow = claims.workflow_ref === `${env.REPOSITORY}/.github/workflows/trend-scout.yml@refs/heads/main`;
       if (shortRoute !== shortWorkflow) return json({ error: 'Workflow cannot access this track' }, 403);
+      if ((previewTest && (!shortWorkflow || claims.event_name !== 'workflow_dispatch' || url.pathname.endsWith('-short'))) ||
+          (!previewTest && testJobRoute)) return json({ error: 'Workflow cannot access this mode' }, 403);
       if (url.pathname === '/render/short-inputs') return await shortInputs(env);
       if (url.pathname === '/render/short-history') return json(await shortHistory(env));
       if (url.pathname === '/render/short') return await prepareShort(request, env, claims);
