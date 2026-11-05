@@ -232,6 +232,15 @@ async function prepareShort(request, env, claims) {
   return json(job?.run_id === claims.run_id && job.status === 'generating' ? { id } : { skip: true });
 }
 
+async function shortInputs(env) {
+  const catalog = JSON.parse(env.REVIEWED_SHORT_SOURCES || '[]');
+  if (!Array.isArray(catalog)) throw new Error('Invalid reviewed Short catalog');
+  const chart = await api('https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&chart=mostPopular&regionCode=IN&maxResults=50', {
+    headers: { 'x-goog-api-key': requireValue(env, 'YOUTUBE_DATA_API_KEY') }
+  });
+  return json({ items: chart.items, catalog });
+}
+
 export async function shortHistory(env) {
   const { results } = await env.DB.prepare(
     "SELECT metadata FROM jobs WHERE id LIKE '%-short' AND file_id IS NOT NULL ORDER BY id"
@@ -438,7 +447,7 @@ export default {
     try {
       if (env.AUTOMATION_ENABLED !== 'true') return json({ error: 'Automation is disabled' }, 503);
       if (url.pathname === '/telegram' && request.method === 'POST') return await webhook(request, env);
-      if (request.method !== 'POST' || !/^\/render\/(job|short|short-history|(preview|inspect)\/\d{4}-\d{2}-\d{2}(?:-short)?)$/.test(url.pathname)) return json({ error: 'Not found' }, 404);
+      if (request.method !== 'POST' || !/^\/render\/(job|short|short-inputs|short-history|(preview|inspect)\/\d{4}-\d{2}-\d{2}(?:-short)?)$/.test(url.pathname)) return json({ error: 'Not found' }, 404);
       let claims;
       try { claims = await authenticate(request, env); } catch (error) {
         const known = ['Missing renderer identity', 'Invalid identity token', 'Invalid signature algorithm',
@@ -447,9 +456,10 @@ export default {
           ? error.message : 'Identity verification failed');
         return json({ error: 'Renderer not authorized' }, 403);
       }
-      const shortRoute = ['/render/short', '/render/short-history'].includes(url.pathname) || url.pathname.endsWith('-short');
+      const shortRoute = ['/render/short', '/render/short-inputs', '/render/short-history'].includes(url.pathname) || url.pathname.endsWith('-short');
       const shortWorkflow = claims.workflow_ref === `${env.REPOSITORY}/.github/workflows/trend-scout.yml@refs/heads/main`;
       if (shortRoute !== shortWorkflow) return json({ error: 'Workflow cannot access this track' }, 403);
+      if (url.pathname === '/render/short-inputs') return await shortInputs(env);
       if (url.pathname === '/render/short-history') return json(await shortHistory(env));
       if (url.pathname === '/render/short') return await prepareShort(request, env, claims);
       if (url.pathname === '/render/job') return await prepareJob(env, claims);

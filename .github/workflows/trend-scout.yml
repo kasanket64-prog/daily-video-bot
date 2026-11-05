@@ -32,10 +32,10 @@ jobs:
           restore-keys: trend-scout-in-v1-
       - name: Collect current chart and measure view growth
         env:
-          YOUTUBE_DATA_API_KEY: ${{ secrets.YOUTUBE_DATA_API_KEY }}
+          CLOUDFLARE_WORKER_URL: ${{ vars.CLOUDFLARE_WORKER_URL }}
         run: |
           mkdir -p .trend-state
-          args=(--region IN)
+          args=(--cloud-catalog "$RUNNER_TEMP/reviewed-sources.json")
           if [[ -f .trend-state/snapshot.json ]]; then
             args+=(--previous .trend-state/snapshot.json)
           fi
@@ -47,16 +47,14 @@ jobs:
           key: trend-scout-in-v1-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Select a fresh candidate with reviewed footage
         env:
-          REVIEWED_SHORT_SOURCES: ${{ secrets.REVIEWED_SHORT_SOURCES }}
           SHORT_DRAFT_HISTORY: ${{ vars.SHORT_DRAFT_HISTORY }}
           CLOUDFLARE_WORKER_URL: ${{ vars.CLOUDFLARE_WORKER_URL }}
           SHORT_TELEGRAM_ENABLED: ${{ vars.SHORT_TELEGRAM_ENABLED }}
         run: |
-          if [[ -z "$REVIEWED_SHORT_SOURCES" ]]; then
+          if [[ "$(cat "$RUNNER_TEMP/reviewed-sources.json")" == '[]' ]]; then
             echo "No reviewed footage catalog configured. Keeping discovery results only."
             exit 0
           fi
-          printf '%s' "$REVIEWED_SHORT_SOURCES" > "$RUNNER_TEMP/reviewed-sources.json"
           printf '%s' "${SHORT_DRAFT_HISTORY:-[]}" > "$RUNNER_TEMP/short-history.json"
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg fonts-noto-core

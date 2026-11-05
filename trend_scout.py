@@ -49,6 +49,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--region", default="IN")
     parser.add_argument("--previous", type=Path, help="Previous scout JSON from the same region")
+    parser.add_argument("--cloud-catalog", type=Path, help="Use the Worker and save its catalog privately")
     args = parser.parse_args()
     region = args.region.upper()
     if not re.fullmatch(r"[A-Z]{2}", region):
@@ -56,6 +57,18 @@ def main():
     previous = json.loads(args.previous.read_text(encoding="utf-8")) if args.previous else None
     if previous and previous.get("region") != region:
         parser.error("The previous snapshot must use the same region")
+    if args.cloud_catalog:
+        if region != "IN":
+            parser.error("The cloud scout uses the India chart")
+        from cloud_render import http, identity, worker_url
+
+        worker = worker_url()
+        inputs = http("POST", worker + "/render/short-inputs",
+                      headers={"Authorization": "Bearer " + identity(worker)}, data={})
+        args.cloud_catalog.write_text(json.dumps(inputs["catalog"]), encoding="utf-8")
+        snapshot = rank_videos(inputs["items"], previous, observed_at=datetime.now(timezone.utc))
+        print(json.dumps({"region": region, **snapshot}, ensure_ascii=True, indent=2))
+        return
     key = os.environ.get("YOUTUBE_DATA_API_KEY")
     if not key:
         parser.error("Set YOUTUBE_DATA_API_KEY in the environment")
