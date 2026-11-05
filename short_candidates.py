@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 from urllib.parse import urlsplit
 
-from short_render import render_short
+from short_render import render_short, suggest_start
 from short_selection import select_short
 
 
@@ -74,7 +74,11 @@ if __name__ == "__main__":
         if downloaded.returncode:
             raise RuntimeError("Could not download the reviewed media file")
         draft = folder / "preview.mp4"
-        render_short(source, draft, candidate["start"], candidate["duration"], candidate["hook"])
+        duration = candidate.get("duration", 15)
+        start = candidate.get("start")
+        if start is None:
+            start = suggest_start(source, duration)
+        render_short(source, draft, start, duration, candidate["hook"])
         probe = json.loads(subprocess.check_output([
             "ffprobe", "-v", "error", "-show_format", "-show_streams", "-of", "json",
             str(draft),
@@ -83,7 +87,7 @@ if __name__ == "__main__":
         if (
             (video["width"], video["height"]) != (720, 1280)
             or not any(stream["codec_type"] == "audio" for stream in probe["streams"])
-            or abs(float(probe["format"]["duration"]) - candidate["duration"]) > 0.25
+            or abs(float(probe["format"]["duration"]) - duration) > 0.25
             or draft.stat().st_size > 19_000_000
         ):
             raise RuntimeError("Draft failed format, duration, audio or size checks")
