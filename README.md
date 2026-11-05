@@ -72,6 +72,12 @@ Cloudflare ordinary Variables: WORKER_URL (same origin), REPOSITORY, REPOSITORY_
 
 Token setup: use the official BotFather, Google AI Studio, Pixabay API documentation, Google OAuth flow, and Meta developer tools. YouTube requires offline user authorization, not a password or generic service account. Instagram uses the Facebook Login for Business / graph.facebook.com resumable route with an eligible professional account and linked Page. OAuth app eligibility, review, quota and token expiry still apply on free services.
 
+## Test Shorts delivery to Telegram
+
+Deploy the updated Worker with `AUTOMATION_ENABLED=false` and set the Worker variable `SHORT_PREVIEW_TEST=true`. Keep the YouTube Data API key and other provider credentials in Cloudflare. The Worker's `REVIEWED_SHORT_SOURCES` catalog must contain a reviewed clip that matches a current India chart entry and is cleared for both platforms. An empty or unmatched catalog produces discovery results only.
+
+In GitHub Actions, set `CLOUDFLARE_WORKER_URL` and `SHORT_TELEGRAM_ENABLED=true` as repository variables, then manually run **Scout trends for Shorts** on `main`. If the exact rendered file passes inspection, the bot sends one labeled test video to the private chat. Test videos have no approval buttons and cannot enter the publishing queue. The Worker blocks scheduled runs, legacy jobs and publishing while `SHORT_PREVIEW_TEST=true`, even if its normal automation flag is on. Remove the test flag after checking Telegram.
+
 ## Free limits and recovery
 
 Keep Workers and D1 on their Free plans and the GitHub repository public with standard runners. Set a $0 blocking GitHub billing budget if a payment method exists on the account. Free quotas and platform eligibility are not guaranteed. Do not attach billing to the Gemini project. No paid fallback is implemented.
