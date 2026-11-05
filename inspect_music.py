@@ -43,7 +43,10 @@ def main():
               "words": [{"text": w.word, "start": w.start, "end": w.end,
                          "probability": w.probability} for w in (s.words or [])]}
              for s in segments]
-    expected = "Wings go up, wings go down, Little Pip stays on the ground."
+    benchmark = json.loads((args.audio_dir / "benchmark.json").read_text(encoding="utf-8"))
+    expected = " ".join(re.sub(r"\[[^\]]*\]", "", benchmark["lyrics"]).split())
+    if not expected:
+        raise ValueError("The benchmark has no lyrics to inspect")
     transcript = " ".join(s["text"].strip() for s in spans)
     report = {"recognizer": "faster-whisper small.en CPU int8",
               "expected": expected, "transcript": transcript, "segments": spans,
