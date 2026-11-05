@@ -92,11 +92,15 @@ def main():
     print("Starting credential-free video renderer.", flush=True)
     subprocess.run([sys.executable, str(ROOT / "render_cloud.py")], cwd=ROOT / "mpt", check=True,
                    timeout=3300)
-    video = (out / "video.mp4").read_bytes()
+    inspect_and_deliver(worker, job['id'], out / 'video.mp4')
+
+
+def inspect_and_deliver(worker, job_id, path):
+    video = path.read_bytes()
     if not 0 < len(video) <= 19_000_000:
         raise RuntimeError("Preview must be below 19 MB")
     details = json.loads(subprocess.check_output(['ffprobe', '-v', 'error', '-show_format', '-show_streams',
-        '-of', 'json', str(out / 'video.mp4')]))
+        '-of', 'json', str(path)]))
     duration = float(details['format']['duration'])
     streams = details['streams']
     visual = next(stream for stream in streams if stream['codec_type'] == 'video')
@@ -104,19 +108,19 @@ def main():
         raise RuntimeError('Draft failed duration, portrait format, or audio inspection')
     frames = []
     for fraction in (0.04, 0.18, 0.35, 0.52, 0.72, 0.92):
-        frame = subprocess.check_output(['ffmpeg', '-v', 'error', '-ss', str(duration * fraction), '-i', str(out / 'video.mp4'),
+        frame = subprocess.check_output(['ffmpeg', '-v', 'error', '-ss', str(duration * fraction), '-i', str(path),
             '-frames:v', '1', '-vf', 'scale=360:640', '-f', 'image2pipe', '-vcodec', 'mjpeg', '-q:v', '4', '-threads', '1', '-'])
         frames.append(base64.b64encode(frame).decode('ascii'))
-    audio = subprocess.check_output(['ffmpeg', '-v', 'error', '-i', str(out / 'video.mp4'), '-vn', '-ac', '1',
+    audio = subprocess.check_output(['ffmpeg', '-v', 'error', '-i', str(path), '-vn', '-ac', '1',
         '-ar', '16000', '-b:a', '48k', '-f', 'mp3', '-'])
-    inspection = http('POST', worker + '/render/inspect/' + job['id'],
+    inspection = http('POST', worker + '/render/inspect/' + job_id,
         headers={'Authorization': 'Bearer ' + identity(worker)}, data={
             'sha256': hashlib.sha256(video).hexdigest(), 'duration': duration, 'frames': frames,
             'audio': base64.b64encode(audio).decode('ascii')}, timeout=240)
     if inspection.get('passed') is not True:
         raise RuntimeError('Automatic inspection held this draft; no approval request or upload was sent')
     print('Automatic inspection passed for this exact video.', flush=True)
-    http("POST", worker + "/render/preview/" + urllib.parse.quote(job["id"], safe=""),
+    http("POST", worker + "/render/preview/" + urllib.parse.quote(job_id, safe=""),
          headers={"Authorization": "Bearer " + identity(worker), "Content-Type": "video/mp4"}, data=video, timeout=300)
     print("Preview delivered. No account credentials were used by this renderer.")
 
