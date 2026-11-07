@@ -28,6 +28,22 @@ def editorial_score(entry):
     return score
 
 
+def learning_adjustments(history):
+    outcomes = {}
+    for item in history:
+        if not isinstance(item, dict):
+            continue
+        if item.get("outcome") not in ("approved", "published", "rejected"):
+            continue
+        values = outcomes.setdefault(item["category"], [0, 0])
+        values[0] += item["outcome"] in ("approved", "published")
+        values[1] += 1
+    return {
+        category: round((2 * approved / total - 1) * 10)
+        for category, (approved, total) in outcomes.items() if total >= 3
+    }
+
+
 def choose_candidate(snapshot, catalog, history):
     """Require reviewed reuse evidence before treating a discovered video as footage."""
     reviewed = {}
@@ -38,6 +54,7 @@ def choose_candidate(snapshot, catalog, history):
     blocked = {name.strip().casefold() for name in os.getenv(
         "SHORT_BLOCKED_CREATORS", "Nikhil Kamath"
     ).split(",") if name.strip()}
+    adjustments = learning_adjustments(history)
     for entry in catalog:
         source_id = entry["source_id"]
         if source_id in reviewed:
@@ -67,7 +84,9 @@ def choose_candidate(snapshot, catalog, history):
             platform not in ("youtube", "instagram") for platform in platforms
         ):
             raise ValueError("Platforms must list youtube, instagram, or both")
-        entry["editorial_score"] = editorial_score(entry)
+        base_score = editorial_score(entry)
+        entry["learning_adjustment"] = adjustments.get(entry["category"], 0)
+        entry["editorial_score"] = min(100, base_score + entry["learning_adjustment"])
         reviewed[source_id] = entry
 
     candidates = []
@@ -77,7 +96,7 @@ def choose_candidate(snapshot, catalog, history):
         if any(name in channel or name in source_id for name in blocked):
             continue
         entry = reviewed.get(video["source_id"])
-        if entry and entry["editorial_score"] is not None and {"youtube", "instagram"} <= set(entry["platforms"]):
+        if entry and entry["editorial_score"] is not None and entry["editorial_score"] >= 60 and {"youtube", "instagram"} <= set(entry["platforms"]):
             candidates.append({**entry, "trend": video})
     candidates.sort(key=lambda item: (-item["editorial_score"], item["trend"]["chart_position"]))
     return select_short(candidates, history)
@@ -147,7 +166,8 @@ if __name__ == "__main__":
             "selected": {key: candidate[key] for key in ("source_id", "trend")},
             "decision": "selected",
             "editorial_score": candidate["editorial_score"],
-            "reason": "Rights and both-platform checks passed; the owner-reviewed concept met the editorial threshold and was fresh against recent history.",
+            "learning_adjustment": candidate["learning_adjustment"],
+            "reason": "Rights and both-platform checks passed; the owner-reviewed concept met the editorial threshold and was fresh against recent history. Category feedback is applied only after three owner decisions.",
         }
         if args.render_dir:
             candidate["rendered"] = True

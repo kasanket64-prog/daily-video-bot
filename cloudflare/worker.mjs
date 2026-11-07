@@ -243,9 +243,9 @@ async function shortInputs(env) {
 
 export async function shortHistory(env) {
   const { results } = await env.DB.prepare(
-    "SELECT metadata FROM jobs WHERE id LIKE '%-short' AND file_id IS NOT NULL ORDER BY id"
+    "SELECT metadata,status FROM jobs WHERE id LIKE '%-short' AND file_id IS NOT NULL ORDER BY id"
   ).all();
-  return results.map(({ metadata }) => JSON.parse(metadata))
+  return results.map(({ metadata, status }) => ({ ...JSON.parse(metadata), outcome: status }))
     .filter(meta => meta.source_id && meta.category)
     .map(meta => ({ source_id: meta.source_id, category: meta.category, story: meta.source_facts, hook: meta.hook }));
 }
