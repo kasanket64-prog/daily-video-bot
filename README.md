@@ -2,6 +2,8 @@
 
 This revision uses **Cloudflare Workers Free + D1 Free** for private configuration, script preparation, Telegram approval, job state, and publishing. GitHub Actions only renders video. No account token or provider key is configured as a GitHub Secret or sent to its runner.
 
+The proposed trend-inspired Reel pipeline, rights/quality gates, role responsibilities, and staged build plan are documented in [CONTENT_ENGINE.md](CONTENT_ENGINE.md). This is a roadmap; stages marked for future work are not yet active in the daily workflow.
+
 Current direction: original children's cartoons. The previous fitness generator is held (`AUTOMATION_ENABLED=false` in Cloudflare), and the old preview was rejected. A new 30-second **Milo & Pip** landscape/vertical style pilot is described in [CARTOON_PILOT.md](CARTOON_PILOT.md). Its manual cloud workflow does not publish or access account credentials. The daily multi-format cartoon workflow is not ready yet. The fitness implementation below is retained as history until replaced.
 
 ## Daily behavior

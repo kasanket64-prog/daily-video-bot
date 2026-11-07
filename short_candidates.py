@@ -1,6 +1,7 @@
 """Select a trending Short with a reviewed source file and reuse record."""
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 from urllib.parse import urlsplit
@@ -10,8 +11,15 @@ from short_selection import select_short
 
 
 def choose_candidate(snapshot, catalog, history):
-    """The catalog is owner-reviewed. YouTube metadata is discovery evidence."""
+    """Require reviewed reuse evidence before treating a discovered video as footage."""
     reviewed = {}
+    required_rights = (
+        "rights_owner_verified", "editing_allowed", "commercial_use_allowed",
+        "audio_cleared", "people_cleared",
+    )
+    blocked = {name.strip().casefold() for name in os.getenv(
+        "SHORT_BLOCKED_CREATORS", "Nikhil Kamath"
+    ).split(",") if name.strip()}
     for entry in catalog:
         source_id = entry["source_id"]
         if source_id in reviewed:
@@ -20,8 +28,20 @@ def choose_candidate(snapshot, catalog, history):
             url = urlsplit(entry[field])
             if url.scheme != "https" or not url.hostname or url.username or url.password:
                 raise ValueError(f"{field} must be an HTTPS URL without credentials")
-        if not isinstance(entry["license"], str) or not entry["license"].strip():
-            raise ValueError("Each reviewed source needs a license or permission record")
+        if entry.get("rights_type") not in (
+            "cc0", "cc-by-4.0", "written-permission", "public-domain"
+        ):
+            raise ValueError("Each source needs a supported, reviewed rights_type")
+        if not all(entry.get(field) is True for field in required_rights):
+            raise ValueError("Each source needs verified rights, edit, commercial, audio and people clearances")
+        if entry["rights_type"] == "cc-by-4.0" and not entry.get("license_url", "").startswith(
+            "https://creativecommons.org/licenses/by/4.0/"
+        ):
+            raise ValueError("CC BY sources need the official CC BY 4.0 license URL")
+        if entry["rights_type"] == "written-permission" and not entry.get("permission_evidence_url"):
+            raise ValueError("Written permission needs a reviewable evidence URL")
+        if entry["rights_type"] == "public-domain" and not entry.get("public_domain_evidence_url"):
+            raise ValueError("Public-domain claims need a reviewable evidence URL")
         if not isinstance(entry["credit"], str) or not entry["credit"].strip():
             raise ValueError("Each reviewed source needs a credit")
         platforms = entry["platforms"]
@@ -33,6 +53,10 @@ def choose_candidate(snapshot, catalog, history):
 
     candidates = []
     for video in snapshot["videos"]:
+        channel = video.get("channel", "").casefold()
+        source_id = video.get("source_id", "").casefold()
+        if any(name in channel or name in source_id for name in blocked):
+            continue
         entry = reviewed.get(video["source_id"])
         if entry and {"youtube", "instagram"} <= set(entry["platforms"]):
             candidates.append({**entry, "trend": video})

@@ -25,26 +25,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - uses: actions/cache/restore@v4
-        with:
-          path: .trend-state
-          key: trend-scout-in-v1-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: trend-scout-in-v1-
-      - name: Collect current chart and measure view growth
+      - name: Collect current chart as discovery context
         env:
           CLOUDFLARE_WORKER_URL: ${{ vars.CLOUDFLARE_WORKER_URL }}
         run: |
-          mkdir -p .trend-state
-          args=(--cloud-catalog "$RUNNER_TEMP/reviewed-sources.json")
-          if [[ -f .trend-state/snapshot.json ]]; then
-            args+=(--previous .trend-state/snapshot.json)
-          fi
-          python trend_scout.py "${args[@]}" > trend-snapshot.json
-          cp trend-snapshot.json .trend-state/snapshot.json
-      - uses: actions/cache/save@v4
-        with:
-          path: .trend-state
-          key: trend-scout-in-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          python trend_scout.py --cloud-catalog "$RUNNER_TEMP/reviewed-sources.json" > trend-snapshot.json
       - name: Select a fresh candidate with reviewed footage
         env:
           SHORT_DRAFT_HISTORY: ${{ vars.SHORT_DRAFT_HISTORY }}

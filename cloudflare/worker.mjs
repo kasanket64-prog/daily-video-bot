@@ -235,7 +235,7 @@ async function prepareShort(request, env, claims) {
 async function shortInputs(env) {
   const catalog = JSON.parse(env.REVIEWED_SHORT_SOURCES || '[]');
   if (!Array.isArray(catalog)) throw new Error('Invalid reviewed Short catalog');
-  const chart = await api('https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&chart=mostPopular&regionCode=IN&maxResults=50', {
+  const chart = await api('https://www.googleapis.com/youtube/v3/videos?part=snippet&chart=mostPopular&regionCode=IN&maxResults=50', {
     headers: { 'x-goog-api-key': requireValue(env, 'YOUTUBE_DATA_API_KEY') }
   });
   return json({ items: chart.items, catalog });
