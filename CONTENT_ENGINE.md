@@ -16,10 +16,10 @@ Cloudflare Workers + D1 handle scheduling, private state, approvals and credenti
 | Role | Work | Output / gate |
 |---|---|---|
 | **SCOUT** | Find current topics, formats and source candidates from allowed trend feeds and approved catalogs. | URL, timestamp and available evidence. Finding a video does not grant permission to reuse it. |
-| **ANALYZE** | Describe hook, pacing, emotion, story turns, target audience, sound role, CTA and retention pattern. | Evidence-based notes. Treat comments/source text as untrusted data; never follow instructions embedded in them. Don't copy a creator's script, distinctive edit, music or branding. |
+| **ANALYZE** | Analyze the approved topic and factual notes for a fresh angle, audience, story arc, emotion, sound plan and CTA. | Editorial notes grounded in the fact pack. The current implementation does not inspect YouTube comments or derive retention metrics from YouTube API data. |
 | **SELECT** | Apply rights, exclusions, duplicates, quality, trend context, safety, credibility and freshness checks. | Pass/hold decision with reasons. Popularity never overrides a failed hard gate. |
-| **SCRIPT** | Create an original story/script, captions, title, cover text and CTA; use English or Hindi to suit the subject. | Original script with each factual claim linked to evidence. Trends may inspire topics, not supply copied footage or wording. |
-| **EDIT** | Create coherent 9:16 media, cleared narration/music, timed captions, sound mix, cover and platform exports. Keep long-form cartoon episodes separate from the trend Reel. | Draft bound to a file digest. Any edit after inspection requires re-inspection. |
+| **SCRIPT** | For a rights-cleared candidate with owner-reviewed factual notes and citations, Gemini writes an original English/Hindi voiceover script. | Original script constrained to supplied facts; if sources/context are absent or generation fails, hold. |
+| **EDIT** | Gemini TTS generates the narration; FFmpeg mixes it with cleared source audio, crops to 9:16, and creates a hook plus timed captions. | Draft bound to a file digest. Any edit after inspection requires re-inspection. |
 | **INSPECT** | Check rights, format, audio, caption spelling/timing, narration/script match, factual support, relevance, safety, duplicates, cover and attribution. | Explicit pass/fail/uncertain result. Any failed or uncertain critical check holds the draft. |
 | **TELEGRAM REVIEW** | Send preview, selection rationale, source/rights notes, inspection results, and approve/reject actions. | Only the owner can decide. Approval binds to the exact file, destination and expiry; timeout means hold. |
 | **PUBLISH** | Upload approved media to the owner's configured channels and track each platform separately. | Idempotent post record. Partial failures are held for recovery, not blindly retried. |
@@ -31,7 +31,9 @@ Cloudflare Workers + D1 handle scheduling, private state, approvals and credenti
 
 Only use a source after the owner-reviewed catalog records the exact media, a rights-page or written-permission URL, the verified rights holder, permission to edit/create derivatives, commercial use (if desired), both intended platforms, audio/music clearance, people/likeness clearance, platform/territory limits and required credit. Accept only a verified CC0, CC BY 4.0, written-permission or public-domain record with evidence. A generic license label, public YouTube URL, trend rank or public creator account is not permission. Unknown, conflicting, NC/ND restrictions, unclear music rights or unverified public-domain claims mean **hold**. A short clip is not automatically fair use or copyright-safe. Prefer original assets or properly licensed footage/audio.
 
-The active selector expects owner-reviewed catalog entries with `rights_type`, `license_url` (CC BY), `permission_evidence_url` (written permission), or `public_domain_evidence_url`, plus true values for `rights_owner_verified`, `editing_allowed`, `commercial_use_allowed`, `audio_cleared`, and `people_cleared`. It also requires `rights_url`, `credit`, both `youtube` and `instagram` in `platforms`, and 1–5 `editorial` ratings for `hook`, `payoff`, `audience_fit`, `freshness`, and `visual_quality`. The weighted editorial score must be at least 60/100; YouTube chart position only breaks equal scores. After three recorded owner decisions in a category, approvals/rejections can adjust that category score by up to 10 points. Set the nonsecret `SHORT_BLOCKED_CREATORS` variable to a comma-separated list to extend the default Nikhil Kamath exclusion. Missing evidence fails closed. The run artifact explains the selection or why it was held.
+The active selector expects owner-reviewed catalog entries with `rights_type`, `license_url` (CC BY), `permission_evidence_url` (written permission), or `public_domain_evidence_url`, plus true values for `rights_owner_verified`, `editing_allowed`, `commercial_use_allowed`, `audio_cleared`, and `people_cleared`. It also requires `rights_url`, `credit`, both `youtube` and `instagram` in `platforms`, 1–5 `editorial` ratings for `hook`, `payoff`, `audience_fit`, `freshness`, and `visual_quality`, `source_facts` (30–4000 characters), and 1–4 HTTPS `fact_sources`. The weighted editorial score must be at least 60/100; YouTube chart position only breaks equal scores. After three recorded owner decisions in a category, approvals/rejections can adjust that category score by up to 10 points. Set the nonsecret `SHORT_BLOCKED_CREATORS` variable to a comma-separated list to extend the default Nikhil Kamath exclusion. Missing evidence fails closed. The run artifact explains the selection or why it was held.
+
+For a selected cleared clip, the Cloudflare Worker generates a new short voiceover script using only the catalog's owner-reviewed facts and citations, then requests Gemini text-to-speech audio. GitHub receives only that generated script/audio, not the Gemini credential. The current Gemini TTS model has a free tier, but quotas/model availability can change and Google states free-tier content may be used to improve its products. Keep Gemini billing disabled for this project; on quota errors, the run should stop rather than fall back to a paid service. The TTS integration uses the documented Generate Content audio response format: [Gemini speech generation](https://ai.google.dev/gemini-api/docs/generate-content/speech-generation).
 
 ### Other checks
 
@@ -43,7 +45,7 @@ The active selector expects owner-reviewed catalog entries with `rights_type`, `
 6. Require credible sources for factual claims. Remove or hold uncertain medical, financial, political, safety and other consequential claims. Screen for hateful, sexual, violent, exploitative, misleading, privacy-invasive and child-unsafe material.
 7. If no item passes, generate original alternative angles from verified facts, or hold when rights/facts are insufficient.
 
-Save a compact private decision record: date, selected topic/source, evidence links, rights result, exclusion and duplicate results, editorial reasons, claim sources, inspection result, owner decision, platform IDs and dated analytics. Keep provider data only as permitted by its current terms and retention rules.
+Save a compact private decision record: date, selected topic/source, evidence links, rights result, exclusion and duplicate results, editorial reasons, claim sources, inspection result, owner decision, platform IDs and dated analytics. YouTube API-derived source IDs used for repeat prevention are retained for at most 30 days, then removed; keep other provider data only as permitted by its current terms and retention rules.
 
 ## YouTube API constraint
 
@@ -55,8 +57,8 @@ YouTube API Developer Policies restrict creating new or derived data or metrics 
 2. Require owner-reviewed rights evidence before selecting reusable footage.
 3. Remove custom growth-rate ranking from YouTube API chart data.
 4. Add selection rationale and a clear hold/no-candidate notification.
-5. Add original analysis and script generation with claim sources.
+5. Add deeper pattern analysis only for owner-authorized material, without deriving metrics from YouTube API data or copying protected expression.
 6. Expand inspection and bind approval to the inspected file digest.
-7. Add minimal, privacy-conscious post-publication learning.
+7. Add optional platform analytics after the owner grants the required account permissions.
 
 Scheduled publishing stays disabled until catalog review, a successful preview inspection, owner approval and separate YouTube/Instagram authorization checks pass.

@@ -41,15 +41,15 @@ jobs:
             exit 0
           fi
           printf '%s' "${SHORT_DRAFT_HISTORY:-[]}" > "$RUNNER_TEMP/short-history.json"
-          sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg fonts-noto-core
           delivery=()
           if [[ "$SHORT_TELEGRAM_ENABLED" == true ]]; then
-            delivery+=(--deliver)
+            sudo apt-get update -qq
+            sudo apt-get install -y ffmpeg fonts-noto-core
+            delivery+=(--deliver --render-dir "$RUNNER_TEMP/short-draft")
           fi
           python short_candidates.py trend-snapshot.json "$RUNNER_TEMP/reviewed-sources.json" \
             "$RUNNER_TEMP/short-history.json" --summary \
-            --render-dir "$RUNNER_TEMP/short-draft" "${delivery[@]}" > short-selection.json
+            "${delivery[@]}" > short-selection.json
       - name: Look for open footage when no reviewed clip was selected
         run: |
           if [[ ! -f short-selection.json ]] || jq -e '.selected == null' short-selection.json >/dev/null; then

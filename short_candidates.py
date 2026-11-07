@@ -1,10 +1,12 @@
 """Select a trending Short with a reviewed source file and reuse record."""
 import argparse
+import base64
 import json
 import os
 from pathlib import Path
 import subprocess
 from urllib.parse import urlsplit
+import wave
 
 from short_render import render_short, suggest_start
 from short_selection import select_short
@@ -34,6 +36,8 @@ def learning_adjustments(history):
         if not isinstance(item, dict):
             continue
         if item.get("outcome") not in ("approved", "published", "rejected"):
+            continue
+        if not isinstance(item.get("category"), str):
             continue
         values = outcomes.setdefault(item["category"], [0, 0])
         values[0] += item["outcome"] in ("approved", "published")
@@ -77,6 +81,19 @@ def choose_candidate(snapshot, catalog, history):
             raise ValueError("Written permission needs a reviewable evidence URL")
         if entry["rights_type"] == "public-domain" and not entry.get("public_domain_evidence_url"):
             raise ValueError("Public-domain claims need a reviewable evidence URL")
+        if not isinstance(entry.get("source_facts"), str) or not 30 <= len(entry["source_facts"].strip()) <= 4000:
+            raise ValueError("Each source needs owner-reviewed factual context")
+        if not isinstance(entry.get("fact_sources"), list) or not 1 <= len(entry["fact_sources"]) <= 4:
+            raise ValueError("Each source needs 1–4 factual citation URLs")
+        for source_url in entry["fact_sources"]:
+            if not isinstance(source_url, str):
+                raise ValueError("Factual citation URLs must be HTTPS strings")
+            url = urlsplit(source_url)
+            if url.scheme != "https" or not url.hostname or url.username or url.password:
+                raise ValueError("Factual citation URLs must use HTTPS")
+        if any(not isinstance(entry.get(field), str) or not entry[field].strip()
+               for field in ("category", "story", "hook")):
+            raise ValueError("Each candidate needs a category, story angle and hook")
         if not isinstance(entry["credit"], str) or not entry["credit"].strip():
             raise ValueError("Each reviewed source needs a credit")
         platforms = entry["platforms"]
@@ -86,7 +103,9 @@ def choose_candidate(snapshot, catalog, history):
             raise ValueError("Platforms must list youtube, instagram, or both")
         base_score = editorial_score(entry)
         entry["learning_adjustment"] = adjustments.get(entry["category"], 0)
-        entry["editorial_score"] = min(100, base_score + entry["learning_adjustment"])
+        entry["editorial_score"] = (
+            None if base_score is None else max(0, min(100, base_score + entry["learning_adjustment"]))
+        )
         reviewed[source_id] = entry
 
     candidates = []
@@ -121,12 +140,36 @@ if __name__ == "__main__":
         from cloud_render import http, identity, inspect_and_deliver, worker_url
 
         worker = worker_url()
-        history += http("POST", worker + "/render/short-history",
-                        headers={"Authorization": "Bearer " + identity(worker)}, data={})
+        auth = {"Authorization": "Bearer " + identity(worker)}
+        history += http("POST", worker + "/render/short-history", headers=auth, data={})
     candidate = choose_candidate(snapshot, catalog, history)
     if candidate is not None and args.render_dir:
+        from cloud_render import http, identity, worker_url
+
+        worker = worker_url()
+        auth = {"Authorization": "Bearer " + identity(worker)}
+        plan = http("POST", worker + "/render/short-script", headers=auth, data={
+            "source_facts": candidate["source_facts"],
+            "sources": candidate["fact_sources"],
+            "category": candidate["category"],
+        }, timeout=240)
         folder = args.render_dir
         folder.mkdir(parents=True, exist_ok=True)
+        narration = folder / "narration.wav"
+        pcm = base64.b64decode(plan["audio_pcm"], validate=True)
+        if len(pcm) < 24000 or len(pcm) > 4_000_000 or len(pcm) % 2:
+            raise RuntimeError("Generated narration audio failed size/format checks")
+        with wave.open(str(narration), "wb") as audio_file:
+            audio_file.setnchannels(1)
+            audio_file.setsampwidth(2)
+            audio_file.setframerate(24000)
+            audio_file.writeframes(pcm)
+        speech_details = json.loads(subprocess.check_output([
+            "ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", str(narration)
+        ], timeout=20))
+        speech_duration = float(speech_details["format"]["duration"])
+        if speech_duration > 31:
+            raise RuntimeError("Generated narration is too long for a Short")
         source = folder / "source-media"
         # The reviewed media URL must resolve directly to a file.
         downloaded = subprocess.run([
@@ -137,11 +180,12 @@ if __name__ == "__main__":
         if downloaded.returncode:
             raise RuntimeError("Could not download the reviewed media file")
         draft = folder / "preview.mp4"
-        duration = candidate.get("duration", 15)
+        duration = max(15, speech_duration + 0.25)
         start = candidate.get("start")
         if start is None:
             start = suggest_start(source, duration)
-        render_short(source, draft, start, duration, candidate["hook"])
+        render_short(source, draft, start, duration, plan["hook"], narration=narration,
+                     script=plan["script"])
         probe = json.loads(subprocess.check_output([
             "ffprobe", "-v", "error", "-show_format", "-show_streams", "-of", "json",
             str(draft),
@@ -155,10 +199,11 @@ if __name__ == "__main__":
         ):
             raise RuntimeError("Draft failed format, duration, audio or size checks")
         if args.deliver:
-            metadata = {key: candidate[key] for key in ("source_id", "hook", "story", "credit", "category")}
-            metadata["title"] = candidate["trend"]["title"]
+            metadata = {key: candidate[key] for key in ("source_id", "credit", "category", "source_facts")}
+            metadata.update({key: plan[key] for key in ("title", "hook", "script", "analysis")})
+            metadata["sources"] = candidate["fact_sources"]
             job = http("POST", worker + "/render/short",
-                       headers={"Authorization": "Bearer " + identity(worker)}, data=metadata)
+                       headers=auth, data=metadata)
             if not job.get("skip"):
                 inspect_and_deliver(worker, job["id"], draft)
     if args.summary and candidate is not None:
