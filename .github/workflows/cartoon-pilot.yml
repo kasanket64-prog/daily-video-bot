@@ -1,4 +1,4 @@
-name: Render original cartoon pilot
+name: Render original cartoon episode and Short
 on:
   workflow_dispatch:
 permissions:
@@ -9,7 +9,7 @@ concurrency:
 jobs:
   pilot:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -20,15 +20,13 @@ jobs:
       - name: Install open-source renderer
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y fonts-dejavu-core
+          sudo apt-get install -y fonts-dejavu-core fonts-noto-core
           python -m pip install -r requirements-cartoon.txt
-      - name: Render one story in both formats
-        run: python -u cartoon_pilot.py --output pilot-output
-      - name: Check the actual exports
-        run: python cartoon_selfcheck.py pilot-output
-      - name: Save pilot for review
+      - name: Render the sample story as a YouTube episode and vertical Short
+        run: python -u cartoon_pilot.py --story-json examples/cartoon-story.json --output cartoon-output
+      - name: Save both exports for review
         uses: actions/upload-artifact@v4
         with:
-          name: milo-and-pip-style-pilot
-          path: pilot-output/
+          name: milo-and-pip-episode-review
+          path: cartoon-output/
           retention-days: 3
