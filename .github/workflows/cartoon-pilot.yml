@@ -3,6 +3,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  id-token: write
 concurrency:
   group: cartoon-style-pilot
   cancel-in-progress: false
@@ -10,6 +11,8 @@ jobs:
   pilot:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      CLOUDFLARE_WORKER_URL: ${{ vars.CLOUDFLARE_WORKER_URL }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,8 +25,24 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y fonts-dejavu-core fonts-noto-core
           python -m pip install -r requirements-cartoon.txt
-      - name: Render the sample story as a YouTube episode and vertical Short
-        run: python -u cartoon_pilot.py --story-json examples/cartoon-story.json --output cartoon-output
+      - name: Get today's original story from Cloudflare
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from bot import http
+          from cloud_render import identity, worker_url
+          worker = worker_url()
+          result = http('POST', worker + '/render/cartoon-story',
+              headers={'Authorization': 'Bearer ' + identity(worker)}, data={})
+          Path('work').mkdir(exist_ok=True)
+          Path('work/cartoon-story.json').write_text(json.dumps(result['story'], ensure_ascii=False), encoding='utf-8')
+          print('Retrieved the saved story for today.')
+          PY
+      - name: Render today's story as a YouTube episode and vertical Short
+        run: python -u cartoon_pilot.py --story-json work/cartoon-story.json --output cartoon-output
+      - name: Include the exact story in the review artifact
+        run: cp work/cartoon-story.json cartoon-output/cartoon-story.json
       - name: Save both exports for review
         uses: actions/upload-artifact@v4
         with:

@@ -34,7 +34,7 @@ export function validateClaims(claims, env, audience, seconds = Date.now() / 100
       !subjects.includes(claims.sub) ||
       claims.repository !== env.REPOSITORY || claims.repository_id !== env.REPOSITORY_ID ||
       claims.repository_owner_id !== env.OWNER_ID || claims.ref !== 'refs/heads/main' ||
-      !['generate.yml', 'trend-scout.yml'].some(file =>
+      !['generate.yml', 'trend-scout.yml', 'cartoon-pilot.yml'].some(file =>
         claims.workflow_ref === `${env.REPOSITORY}/.github/workflows/${file}@refs/heads/main`) ||
       !['schedule', 'workflow_dispatch'].includes(claims.event_name) || !/^\d+$/.test(claims.run_id || '')) {
     throw new Error('Renderer identity denied');
@@ -99,6 +99,46 @@ export function validateMetadata(meta) {
   if (!Array.isArray(meta.terms) || meta.terms.length < 1 || meta.terms.length > 5 ||
       meta.terms.some(term => typeof term !== 'string' || !term.trim() || term.length > 80)) throw new Error('Invalid terms');
   return meta;
+}
+
+export function validateCartoonStory(story) {
+  const actions = new Set(['idle', 'walk', 'search', 'find', 'return', 'play', 'celebrate']);
+  if (!story || typeof story !== 'object' || Array.isArray(story) ||
+      typeof story.title !== 'string' || story.title.trim().length < 1 || story.title.length > 45 ||
+      !['en', 'hi'].includes(story.language) || !Array.isArray(story.scenes) || story.scenes.length !== 24 ||
+      story.scenes.some(scene => !scene || typeof scene.line !== 'string' ||
+        scene.line.trim().length < 1 || scene.line.length > 110 || scene.line.trim().split(/\s+/).length > 14 ||
+        !actions.has(scene.action))) throw new Error('Invalid cartoon story');
+  return story;
+}
+
+function storyFingerprint(story) {
+  return story.scenes.map(scene => scene.line.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()).join('|');
+}
+
+export async function prepareCartoonStory(env) {
+  const id = day();
+  const key = 'cartoon-story:' + id;
+  const existing = await env.DB.prepare('SELECT value FROM settings WHERE name=?').bind(key).first();
+  if (existing) return json({ story: JSON.parse(existing.value), reused: true });
+  const past = (await env.DB.prepare("SELECT value FROM settings WHERE name LIKE 'cartoon-story:%' ORDER BY name DESC LIMIT 30").all()).results;
+  const prior = past.map(entry => { try { return JSON.parse(entry.value); } catch { return null; } }).filter(Boolean);
+  const prompt = `Write one original, gentle children's cartoon story for Milo, a bunny, and Pip, a small bird. Ages 3–8. Use only the garden, red ball, flowers, and fireflies as visible story elements; do not introduce other characters, objects, places or actions the simple 2D animation cannot show. Keep it warm, safe, non-scary, nonviolent, inclusive, and free of brands or copied characters/storylines. Give a small clear problem, a clue, a satisfying solution, and a kind takeaway. Make today's plot genuinely different from these previous titles: ${JSON.stringify(prior.map(item => item.title))}. Pick English or Hindi based on what best suits this story; Hindi narration must be Devanagari. Return only JSON with title (45 characters max), language (en or hi), and exactly 24 scenes. Each scene has line (1–14 short spoken words, maximum 110 characters) and action, chosen only from idle, walk, search, find, return, play, celebrate. These 24 five-second scenes form a two-minute narrated episode. Keep the lines simple, natural to speak, and visually consistent with the allowed garden story world.`;
+  const model = env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+  if (!/^[a-zA-Z0-9._-]+$/.test(model)) throw new Error('Invalid model');
+  const result = await api(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': requireValue(env, 'GEMINI_API_KEY') },
+    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: 'application/json' } })
+  });
+  const text = result.candidates?.[0]?.content?.parts?.map(part => part.text || '').join('') || '';
+  const story = validateCartoonStory(JSON.parse(text));
+  const fingerprint = storyFingerprint(story);
+  if (prior.some(item => {
+    try { return storyFingerprint(validateCartoonStory(item)) === fingerprint; } catch { return false; }
+  })) throw new Error('Repeated cartoon story');
+  await env.DB.prepare('INSERT OR IGNORE INTO settings(name,value) VALUES(?,?)').bind(key, JSON.stringify(story)).run();
+  const saved = await env.DB.prepare('SELECT value FROM settings WHERE name=?').bind(key).first();
+  return json({ story: JSON.parse(saved.value) });
 }
 
 function decodeXML(value = '') {
@@ -496,11 +536,12 @@ export default {
     const url = new URL(request.url);
     const previewTest = env.SHORT_PREVIEW_TEST === 'true';
     const enabled = env.AUTOMATION_ENABLED === 'true' && !previewTest;
+    const cartoonStoryRoute = url.pathname === '/render/cartoon-story';
     if (url.pathname === '/health' && request.method === 'GET') return json({ service: 'daily-video-approvals', enabled });
     try {
-      if (!enabled && !previewTest) return json({ error: 'Automation is disabled' }, 503);
+      if (!enabled && !previewTest && !cartoonStoryRoute) return json({ error: 'Automation is disabled' }, 503);
       if (enabled && url.pathname === '/telegram' && request.method === 'POST') return await webhook(request, env);
-      if (request.method !== 'POST' || !/^\/render\/(job|short|short-script|short-inputs|short-history|(preview|inspect)\/\d{4}-\d{2}-\d{2}(?:-short(?:-test)?)?)$/.test(url.pathname)) return json({ error: 'Not found' }, 404);
+      if (request.method !== 'POST' || !(cartoonStoryRoute || /^\/render\/(job|short|short-script|short-inputs|short-history|(preview|inspect)\/\d{4}-\d{2}-\d{2}(?:-short(?:-test)?)?)$/.test(url.pathname))) return json({ error: 'Not found' }, 404);
       let claims;
       try { claims = await authenticate(request, env); } catch (error) {
         const known = ['Missing renderer identity', 'Invalid identity token', 'Invalid signature algorithm',
@@ -513,10 +554,12 @@ export default {
       const shortRoute = ['/render/short', '/render/short-script', '/render/short-inputs', '/render/short-history'].includes(url.pathname) ||
         url.pathname.endsWith('-short') || testJobRoute;
       const shortWorkflow = claims.workflow_ref === `${env.REPOSITORY}/.github/workflows/trend-scout.yml@refs/heads/main`;
-      if (shortRoute !== shortWorkflow) return json({ error: 'Workflow cannot access this track' }, 403);
+      const cartoonWorkflow = claims.workflow_ref === `${env.REPOSITORY}/.github/workflows/cartoon-pilot.yml@refs/heads/main`;
+      if (shortRoute !== shortWorkflow || cartoonStoryRoute !== cartoonWorkflow) return json({ error: 'Workflow cannot access this track' }, 403);
       if ((previewTest && (!shortWorkflow || claims.event_name !== 'workflow_dispatch' || url.pathname.endsWith('-short'))) ||
           (!previewTest && testJobRoute)) return json({ error: 'Workflow cannot access this mode' }, 403);
       if (url.pathname === '/render/short-inputs') return await shortInputs(env);
+      if (cartoonStoryRoute) return await prepareCartoonStory(env);
       if (url.pathname === '/render/short-history') return json(await shortHistory(env));
       if (url.pathname === '/render/short-script') return await createShortScript(request, env);
       if (url.pathname === '/render/short') return await prepareShort(request, env, claims);
