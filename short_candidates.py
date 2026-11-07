@@ -9,6 +9,24 @@ from urllib.parse import urlsplit
 from short_render import render_short, suggest_start
 from short_selection import select_short
 
+EDITORIAL_WEIGHTS = {
+    "hook": 0.25, "payoff": 0.25, "audience_fit": 0.20,
+    "freshness": 0.15, "visual_quality": 0.15,
+}
+
+
+def editorial_score(entry):
+    review = entry.get("editorial")
+    if not isinstance(review, dict) or any(
+        type(review.get(field)) is not int or not 1 <= review[field] <= 5
+        for field in EDITORIAL_WEIGHTS
+    ):
+        raise ValueError("Each source needs owner-reviewed 1–5 editorial ratings")
+    score = round(sum(review[field] * weight for field, weight in EDITORIAL_WEIGHTS.items()) * 20)
+    if score < 60:
+        return None
+    return score
+
 
 def choose_candidate(snapshot, catalog, history):
     """Require reviewed reuse evidence before treating a discovered video as footage."""
@@ -49,6 +67,7 @@ def choose_candidate(snapshot, catalog, history):
             platform not in ("youtube", "instagram") for platform in platforms
         ):
             raise ValueError("Platforms must list youtube, instagram, or both")
+        entry["editorial_score"] = editorial_score(entry)
         reviewed[source_id] = entry
 
     candidates = []
@@ -58,8 +77,9 @@ def choose_candidate(snapshot, catalog, history):
         if any(name in channel or name in source_id for name in blocked):
             continue
         entry = reviewed.get(video["source_id"])
-        if entry and {"youtube", "instagram"} <= set(entry["platforms"]):
+        if entry and entry["editorial_score"] is not None and {"youtube", "instagram"} <= set(entry["platforms"]):
             candidates.append({**entry, "trend": video})
+    candidates.sort(key=lambda item: (-item["editorial_score"], item["trend"]["chart_position"]))
     return select_short(candidates, history)
 
 
@@ -123,7 +143,18 @@ if __name__ == "__main__":
             if not job.get("skip"):
                 inspect_and_deliver(worker, job["id"], draft)
     if args.summary and candidate is not None:
-        candidate = {key: candidate[key] for key in ("source_id", "trend")}
+        candidate = {
+            "selected": {key: candidate[key] for key in ("source_id", "trend")},
+            "decision": "selected",
+            "editorial_score": candidate["editorial_score"],
+            "reason": "Rights and both-platform checks passed; the owner-reviewed concept met the editorial threshold and was fresh against recent history.",
+        }
         if args.render_dir:
             candidate["rendered"] = True
+    elif args.summary:
+        candidate = {
+            "selected": None,
+            "decision": "hold",
+            "reason": "No fresh trend candidate passed the rights, platform, blocked-creator and editorial-quality gates.",
+        }
     print(json.dumps(candidate, ensure_ascii=True, indent=2))

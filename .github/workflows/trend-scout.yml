@@ -52,7 +52,7 @@ jobs:
             --render-dir "$RUNNER_TEMP/short-draft" "${delivery[@]}" > short-selection.json
       - name: Look for open footage when no reviewed clip was selected
         run: |
-          if [[ ! -f short-selection.json || "$(cat short-selection.json)" == 'null' ]]; then
+          if [[ ! -f short-selection.json ]] || jq -e '.selected == null' short-selection.json >/dev/null; then
             python footage_scout.py --snapshot trend-snapshot.json > footage-leads.json
           fi
       - uses: actions/upload-artifact@v4
