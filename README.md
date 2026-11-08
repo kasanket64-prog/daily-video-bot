@@ -4,7 +4,7 @@ This revision uses **Cloudflare Workers Free + D1 Free** for private configurati
 
 The trend-Reel branch now includes rights-gated selection, editorial scoring, original script and narration generation from reviewed facts, timed captions, inspection, Telegram approval, and owner-decision learning. The stage-by-stage design and remaining work are in [CONTENT_ENGINE.md](CONTENT_ENGINE.md). Redeploy the Worker before using this update; scheduled publishing remains disabled until a live preview is checked.
 
-Current direction: original children's cartoons. The previous fitness generator is held (`AUTOMATION_ENABLED=false` in Cloudflare), and the old preview was rejected. The **Milo & Pip** renderer supports a daily saved two-minute story, a landscape episode, and a 20-second vertical highlight; see [CARTOON_PILOT.md](CARTOON_PILOT.md). The manual cloud workflow saves an artifact only and does not publish. Telegram review, scheduled generation, and account uploads are still separate unfinished work. The fitness implementation below is retained as history until replaced.
+Current direction: original children's cartoons. The previous fitness generator is held (`AUTOMATION_ENABLED=false` in Cloudflare), and the old preview was rejected. The **Milo & Pip** workflow generates one saved two-minute story, a landscape episode, and a 20-second vertical highlight, inspects them, and sends the exact previews to private Telegram; see [CARTOON_PILOT.md](CARTOON_PILOT.md). It does not publish without owner approval. Daily generation is separately controlled by `CARTOON_AUTOMATION_ENABLED`; the fitness implementation below is retained as history until replaced.
 
 ## Daily behavior
 
