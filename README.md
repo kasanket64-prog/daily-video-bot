@@ -1,8 +1,22 @@
 # Daily video bot â€” credentials stay outside GitHub
 
+## Daily GTA 6 Reels
+
+[Set up GTA Reels and run the first Telegram preview](GTA_SETUP.md).
+
+Enable `GTA_REELS_ENABLED=true` in both Cloudflare Worker variables and GitHub Actions repository variables after deploying this branch's Worker and merging the workflow into `main`. The scout runs at 06:07 India time. The cloud runner prepares up to 40 distinct gameplay highlights per India-local day, preserving the streamer’s original audio. Telegram sends each inspected file with its own approval buttons as soon as it is ready. Each approved clip targets YouTube and Instagram. The example YouTube visibility is private. Scheduling and generation depend on free service availability.
+
+Set `CLOUDFLARE_WORKER_URL` in GitHub. Keep provider and social credentials in Cloudflare. For the first preview, set the Worker variable `SHORT_PREVIEW_TEST=true` and manually run **Scout trends for Shorts** on main. The test sends a private preview without publish buttons. Set the test flag to false for daily approvals.
+
+In the Worker's private `REVIEWED_SHORT_SOURCES` JSON array, use the [GTA source template](examples/gta-source.json). Replace the placeholders with the stream's public YouTube ID, the creator's direct HTTPS MP4 download, the public credit and sources, and private evidence of reuse permission. Set each clearance to true only after checking it. The bot selects eligible entries tagged exactly `GTA 6 gameplay`, skips overlapping highlights reserved in the past 30 days, and holds when the queue is empty. A YouTube watch URL identifies the recording. The media download must point directly to a file up to 1 GB. Remove the entry to withdraw it before publication.
+
+The editor compares two-second audio peaks against the previous minute for up to two hours of footage and groups nearby reactions into one moment, allowing time for setup and payoff. Visual changes also contribute to selection. Faster-Whisper runs on the cloud runner CPU and times captions to the original speech. Each source is downloaded once per run. An exhausted queue, a failed inspection or a service limit can reduce daily output. A held clip consumes a daily slot. This approach is inspired by [NeonClipping](https://github.com/iamajmeena/neonclipping). The inspector reviews six frames and the audio before sending the rendered file for approval.
+
 This revision uses **Cloudflare Workers Free + D1 Free** for private configuration, script preparation, Telegram approval, job state, and publishing. GitHub Actions only renders video. No account token or provider key is configured as a GitHub Secret or sent to its runner.
 
-Current direction: original children's cartoons. The previous fitness generator is held (`AUTOMATION_ENABLED=false` in Cloudflare), and the old preview was rejected. A new 30-second **Milo & Pip** landscape/vertical style pilot is described in [CARTOON_PILOT.md](CARTOON_PILOT.md). Its manual cloud workflow does not publish or access account credentials. The daily multi-format cartoon workflow is not ready yet. The fitness implementation below is retained as history until replaced.
+The trend-Reel branch now includes rights-gated selection, editorial scoring, original script and narration generation from reviewed facts, timed captions, inspection, Telegram approval, and owner-decision learning. The stage-by-stage design and remaining work are in [CONTENT_ENGINE.md](CONTENT_ENGINE.md). Redeploy the Worker before using this update; scheduled publishing remains disabled until a live preview is checked.
+
+Current direction: original children's cartoons. Both tracks are off by default (`AUTOMATION_ENABLED=false` and `CARTOON_AUTOMATION_ENABLED=false` in Cloudflare). The **Milo & Pip** workflow saves one original story per India-local date, rotates episodes between 2, 3, 4 and 5 minutes, makes a 20-second vertical highlight, inspects both, then sends the exact previews to private Telegram; see [CARTOON_PILOT.md](CARTOON_PILOT.md). It does not publish without owner approval. The fitness implementation below is retained as history until replaced.
 
 ## Daily behavior
 
@@ -57,7 +71,7 @@ GitHub automatically supplies temporary job identity. Personal GitHub tokens and
 | INSTAGRAM_USER_ID | Professional Instagram account ID |
 | INSTAGRAM_ACCESS_TOKEN | Authorized Facebook Login for Business route token |
 
-Cloudflare ordinary Variables: WORKER_URL (same origin), REPOSITORY, REPOSITORY_ID, OWNER_ID, GEMINI_MODEL, YOUTUBE_PRIVACY, META_API_VERSION, AUTOMATION_ENABLED. The repository identity defaults are in cloudflare/wrangler.jsonc. Use a currently supported Meta version. Start YouTube with private visibility. Do not place actual secrets in wrangler.jsonc or any file committed to GitHub.
+Cloudflare ordinary Variables: WORKER_URL (same origin), REPOSITORY, REPOSITORY_ID, OWNER_ID, GEMINI_MODEL, YOUTUBE_PRIVACY, META_API_VERSION, AUTOMATION_ENABLED, CARTOON_AUTOMATION_ENABLED. Keep both automation switches false until the preview workflow has been deployed and checked. The repository identity defaults are in cloudflare/wrangler.jsonc. Use a currently supported Meta version. Start YouTube with private visibility. Do not place actual secrets in wrangler.jsonc or any file committed to GitHub.
 
 ## Cloudflare setup
 

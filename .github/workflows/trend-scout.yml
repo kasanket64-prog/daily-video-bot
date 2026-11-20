@@ -15,9 +15,11 @@ concurrency:
 
 jobs:
   scout:
-    if: github.event_name == 'workflow_dispatch' || vars.TREND_SCOUT_ENABLED == 'true'
+    if: (vars.GTA_REELS_ENABLED != 'true' || github.event.repository.private == false) && (github.event_name == 'workflow_dispatch' || vars.TREND_SCOUT_ENABLED == 'true' || vars.GTA_REELS_ENABLED == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 175
+    env:
+      GTA_REELS_ENABLED: ${{ vars.GTA_REELS_ENABLED }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,26 +27,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - uses: actions/cache/restore@v4
-        with:
-          path: .trend-state
-          key: trend-scout-in-v1-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: trend-scout-in-v1-
-      - name: Collect current chart and measure view growth
+      - name: Collect current chart as discovery context
         env:
           CLOUDFLARE_WORKER_URL: ${{ vars.CLOUDFLARE_WORKER_URL }}
         run: |
-          mkdir -p .trend-state
-          args=(--cloud-catalog "$RUNNER_TEMP/reviewed-sources.json")
-          if [[ -f .trend-state/snapshot.json ]]; then
-            args+=(--previous .trend-state/snapshot.json)
-          fi
-          python trend_scout.py "${args[@]}" > trend-snapshot.json
-          cp trend-snapshot.json .trend-state/snapshot.json
-      - uses: actions/cache/save@v4
-        with:
-          path: .trend-state
-          key: trend-scout-in-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          python trend_scout.py --cloud-catalog "$RUNNER_TEMP/reviewed-sources.json" > trend-snapshot.json
       - name: Select a fresh candidate with reviewed footage
         env:
           SHORT_DRAFT_HISTORY: ${{ vars.SHORT_DRAFT_HISTORY }}
@@ -56,18 +43,24 @@ jobs:
             exit 0
           fi
           printf '%s' "${SHORT_DRAFT_HISTORY:-[]}" > "$RUNNER_TEMP/short-history.json"
-          sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg fonts-noto-core
           delivery=()
-          if [[ "$SHORT_TELEGRAM_ENABLED" == true ]]; then
-            delivery+=(--deliver)
+          if [[ "$SHORT_TELEGRAM_ENABLED" == true || "$GTA_REELS_ENABLED" == true ]]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y ffmpeg fonts-noto-core
+            delivery+=(--deliver --render-dir "$RUNNER_TEMP/short-draft")
+          fi
+          if [[ "$GTA_REELS_ENABLED" == true ]]; then
+            python -m pip install faster-whisper==1.2.1
+            python gta_batch.py trend-snapshot.json "$RUNNER_TEMP/reviewed-sources.json" "$RUNNER_TEMP/short-draft" > short-selection.json
+            exit 0
           fi
           python short_candidates.py trend-snapshot.json "$RUNNER_TEMP/reviewed-sources.json" \
             "$RUNNER_TEMP/short-history.json" --summary \
-            --render-dir "$RUNNER_TEMP/short-draft" "${delivery[@]}" > short-selection.json
+            "${delivery[@]}" > short-selection.json
       - name: Look for open footage when no reviewed clip was selected
+        if: vars.GTA_REELS_ENABLED != 'true'
         run: |
-          if [[ ! -f short-selection.json || "$(cat short-selection.json)" == 'null' ]]; then
+          if [[ ! -f short-selection.json ]] || jq -e '.selected == null' short-selection.json >/dev/null; then
             python footage_scout.py --snapshot trend-snapshot.json > footage-leads.json
           fi
       - uses: actions/upload-artifact@v4

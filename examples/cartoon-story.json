@@ -1,0 +1,30 @@
+{
+  "title": "Milo & Pip: The Firefly Clue",
+  "language": "en",
+  "scenes": [
+    {"line":"Milo planned a little parade through the garden.","action":"play"},
+    {"line":"Pip promised to be the parade's cheerful drummer.","action":"play"},
+    {"line":"They practiced one gentle beat together.","action":"play"},
+    {"line":"Then Milo's bright red ball bounced away.","action":"walk"},
+    {"line":"It vanished behind the tall flower bush.","action":"search"},
+    {"line":"Milo searched the path, but found only leaves.","action":"search"},
+    {"line":"Pip listened carefully beside the flowers.","action":"search"},
+    {"line":"A soft tap answered from somewhere nearby.","action":"search"},
+    {"line":"The friends paused and listened once more.","action":"search"},
+    {"line":"A tiny firefly glowed above the grass.","action":"find"},
+    {"line":"Then another light blinked near the bush.","action":"find"},
+    {"line":"Pip followed their twinkling trail slowly.","action":"walk"},
+    {"line":"Milo tiptoed behind his brave little friend.","action":"walk"},
+    {"line":"The fireflies gathered near one bright red spot.","action":"find"},
+    {"line":"There was the ball, tucked beside a root.","action":"find"},
+    {"line":"Pip nudged it gently back to Milo.","action":"return"},
+    {"line":"Milo smiled and thanked Pip for listening.","action":"celebrate"},
+    {"line":"The fireflies shimmered like tiny parade lights.","action":"celebrate"},
+    {"line":"Pip tapped a happy rhythm on the ball.","action":"play"},
+    {"line":"Milo hopped along the garden path.","action":"play"},
+    {"line":"The friends marched beneath the evening flowers.","action":"walk"},
+    {"line":"Every firefly seemed to dance along.","action":"celebrate"},
+    {"line":"They learned that patient listening can help.","action":"celebrate"},
+    {"line":"And their tiny parade reached home together.","action":"celebrate"}
+  ]
+}
