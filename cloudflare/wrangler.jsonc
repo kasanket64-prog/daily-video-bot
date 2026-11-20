@@ -7,6 +7,7 @@
   "observability": { "enabled": false },
   "vars": {
     "AUTOMATION_ENABLED": "false",
+    "CARTOON_AUTOMATION_ENABLED": "false",
     "REPOSITORY": "kasanket64-prog/daily-video-bot",
     "REPOSITORY_ID": "1444540860",
     "OWNER_ID": "232636360",

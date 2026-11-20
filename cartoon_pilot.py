@@ -289,10 +289,14 @@ def render(destination, width, height, audio, scenes, title, language, start_sce
     with av.open(str(destination), 'w') as output:
         video = output.add_stream('libx264', rate=FPS)
         video.width, video.height, video.pix_fmt = width, height, 'yuv420p'
-        video.options = {'crf':'21', 'preset':'fast'}
+        if not stage.portrait and duration >= 120:
+            video.bit_rate = 390000
+            video.options = {'maxrate':'420k', 'bufsize':'840k', 'preset':'fast'}
+        else:
+            video.options = {'crf':'21', 'preset':'fast'}
         sound = output.add_stream('aac', rate=48000)
         sound.layout = 'mono'
-        sound.bit_rate = 96000
+        sound.bit_rate = 80000 if not stage.portrait and duration >= 120 else 96000
         sample_cursor = 0
         for index in range(duration*FPS):
             frame = av.VideoFrame.from_image(stage.render(start_seconds + index/FPS, scenes, title, index/FPS))

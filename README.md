@@ -4,7 +4,7 @@ This revision uses **Cloudflare Workers Free + D1 Free** for private configurati
 
 The trend-Reel branch now includes rights-gated selection, editorial scoring, original script and narration generation from reviewed facts, timed captions, inspection, Telegram approval, and owner-decision learning. The stage-by-stage design and remaining work are in [CONTENT_ENGINE.md](CONTENT_ENGINE.md). Redeploy the Worker before using this update; scheduled publishing remains disabled until a live preview is checked.
 
-Current direction: original children's cartoons. The previous fitness generator is held (`AUTOMATION_ENABLED=false` in Cloudflare), and the old preview was rejected. The **Milo & Pip** workflow generates one saved two-minute story, a landscape episode, and a 20-second vertical highlight, inspects them, and sends the exact previews to private Telegram; see [CARTOON_PILOT.md](CARTOON_PILOT.md). It does not publish without owner approval. Daily generation is separately controlled by `CARTOON_AUTOMATION_ENABLED`; the fitness implementation below is retained as history until replaced.
+Current direction: original children's cartoons. Both tracks are off by default (`AUTOMATION_ENABLED=false` and `CARTOON_AUTOMATION_ENABLED=false` in Cloudflare). The **Milo & Pip** workflow saves one original story per India-local date, rotates episodes between 2, 3, 4 and 5 minutes, makes a 20-second vertical highlight, inspects both, then sends the exact previews to private Telegram; see [CARTOON_PILOT.md](CARTOON_PILOT.md). It does not publish without owner approval. The fitness implementation below is retained as history until replaced.
 
 ## Daily behavior
 
@@ -59,7 +59,7 @@ GitHub automatically supplies temporary job identity. Personal GitHub tokens and
 | INSTAGRAM_USER_ID | Professional Instagram account ID |
 | INSTAGRAM_ACCESS_TOKEN | Authorized Facebook Login for Business route token |
 
-Cloudflare ordinary Variables: WORKER_URL (same origin), REPOSITORY, REPOSITORY_ID, OWNER_ID, GEMINI_MODEL, YOUTUBE_PRIVACY, META_API_VERSION, AUTOMATION_ENABLED. The repository identity defaults are in cloudflare/wrangler.jsonc. Use a currently supported Meta version. Start YouTube with private visibility. Do not place actual secrets in wrangler.jsonc or any file committed to GitHub.
+Cloudflare ordinary Variables: WORKER_URL (same origin), REPOSITORY, REPOSITORY_ID, OWNER_ID, GEMINI_MODEL, YOUTUBE_PRIVACY, META_API_VERSION, AUTOMATION_ENABLED, CARTOON_AUTOMATION_ENABLED. Keep both automation switches false until the preview workflow has been deployed and checked. The repository identity defaults are in cloudflare/wrangler.jsonc. Use a currently supported Meta version. Start YouTube with private visibility. Do not place actual secrets in wrangler.jsonc or any file committed to GitHub.
 
 ## Cloudflare setup
 
