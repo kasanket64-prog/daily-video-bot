@@ -183,7 +183,7 @@ test('identity signatures are verified cryptographically', async () => {
     await assert.rejects(authenticate(request(input + '.' + Buffer.alloc(256).toString('base64url')), env));
     await assert.rejects(authenticate(request(base({ alg: 'none' }) + '.' + base(claims()) + '.x'), env));
 
-    const DB = { prepare: () => ({ all: async () => ({ results: [] }) }) };
+    const DB = { prepare: () => ({ run: async () => ({}), all: async () => ({ results: [] }) }) };
     const testEnv = { ...env, DB, SHORT_PREVIEW_TEST: 'true', AUTOMATION_ENABLED: 'true',
       TELEGRAM_BOT_TOKEN: 'private', TELEGRAM_WEBHOOK_SECRET: 'private' };
     const shortClaims = { ...claims(), workflow_ref: 'owner/repo/.github/workflows/trend-scout.yml@refs/heads/main' };
@@ -195,6 +195,10 @@ test('identity signatures are verified cryptographically', async () => {
       { ...testEnv, SHORT_PREVIEW_TEST: 'false' })).status, 403);
     assert.equal((await worker.fetch(request(manual, '/telegram'), testEnv)).status, 404);
     assert.deepEqual(await (await worker.fetch(request(manual, '/render/short-history'), testEnv)).json(), []);
+    const gtaEnv = { ...testEnv, GTA_REELS_ENABLED: 'true', SHORT_PREVIEW_TEST: 'false' };
+    assert.deepEqual(await (await worker.fetch(request(manual, '/render/short-inputs'), gtaEnv)).json(),
+      { items: [], catalog: [], gta: true });
+    assert.equal((await worker.fetch(request(token), gtaEnv)).status, 403);
     let tick;
     await worker.scheduled(null, testEnv, { waitUntil(promise) { tick = promise; } });
     await tick;

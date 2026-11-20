@@ -10,6 +10,29 @@ import sys
 from tempfile import TemporaryDirectory
 
 
+def gta_start(source, duration, *, ffmpeg="ffmpeg"):
+    """Rank two-second reactions against the previous minute of game audio."""
+    result = subprocess.run([
+        ffmpeg, "-nostdin", "-v", "error", "-protocol_whitelist", "file",
+        "-format_whitelist", "mov,matroska,webm", "-i", str(source), "-map", "0:a:0",
+        "-t", "7200", "-af", "aresample=8000,asetnsamples=n=8000:p=0,"
+        "astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-",
+        "-f", "null", "-",
+    ], capture_output=True, text=True, check=True, timeout=480)
+    levels = [max(-80., float(line.split("=")[1])) for line in result.stdout.splitlines()
+              if line.startswith("lavfi.astats.Overall.RMS_level=")]
+    # Ignore the final possibly partial second when placing the cut.
+    last = len(levels) - 1 - math.ceil(duration)
+    if last < 0 or max(levels) < -46:
+        raise ValueError("Gameplay has insufficient duration or audible reaction cues")
+    def reaction(i):
+        prior = levels[max(0, i-60):i] or levels[:1]
+        energy = (levels[i] + levels[i+1]) / 2
+        return energy - max(-50, sum(prior)/len(prior)) + 0.35 * energy
+    peak = max(range(len(levels)-1), key=reaction)
+    return min(last, max(0, peak - 5))
+
+
 def suggest_start(source, duration, *, ffmpeg="ffmpeg"):
     """Place the strongest sustained audio moment after a short setup."""
     if not 15 <= duration <= 32:

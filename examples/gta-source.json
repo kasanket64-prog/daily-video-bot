@@ -1,0 +1,22 @@
+[
+  {
+    "category": "GTA 6 gameplay",
+    "source_id": "youtube:REPLACE_ID",
+    "media_url": "https://example.com/creator-provided-gameplay.mp4",
+    "rights_type": "written-permission",
+    "rights_url": "https://example.com/clipping-terms",
+    "permission_evidence_url": "https://example.com/private-permission-record",
+    "platforms": ["youtube", "instagram"],
+    "rights_owner_verified": false,
+    "editing_allowed": false,
+    "commercial_use_allowed": false,
+    "audio_cleared": false,
+    "people_cleared": false,
+    "credit": "Replace with the agreed public credit",
+    "source_facts": "Replace with observed details from the gameplay that the commentary can accurately describe.",
+    "fact_sources": ["https://www.youtube.com/watch?v=REPLACE_ID"],
+    "story": "Replace with the setup and outcome",
+    "hook": "Replace with the opening idea",
+    "editorial": {"hook": 3, "payoff": 3, "audience_fit": 3, "freshness": 3, "visual_quality": 3}
+  }
+]

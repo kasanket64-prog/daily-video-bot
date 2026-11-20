@@ -47,6 +47,8 @@ def main():
         worker = worker_url()
         inputs = http("POST", worker + "/render/short-inputs",
                       headers={"Authorization": "Bearer " + identity(worker)}, data={})
+        if (os.getenv("GTA_REELS_ENABLED") == "true") != bool(inputs.get("gta")):
+            raise RuntimeError("Set GTA_REELS_ENABLED to the same value in GitHub and Cloudflare")
         args.cloud_catalog.write_text(json.dumps(inputs["catalog"]), encoding="utf-8")
         snapshot = rank_videos(inputs["items"], observed_at=datetime.now(timezone.utc))
         print(json.dumps({"region": region, **snapshot}, ensure_ascii=True, indent=2))

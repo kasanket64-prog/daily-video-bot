@@ -15,9 +15,11 @@ concurrency:
 
 jobs:
   scout:
-    if: github.event_name == 'workflow_dispatch' || vars.TREND_SCOUT_ENABLED == 'true'
+    if: (vars.GTA_REELS_ENABLED != 'true' || github.event.repository.private == false) && (github.event_name == 'workflow_dispatch' || vars.TREND_SCOUT_ENABLED == 'true' || vars.GTA_REELS_ENABLED == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
+    env:
+      GTA_REELS_ENABLED: ${{ vars.GTA_REELS_ENABLED }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,7 +44,7 @@ jobs:
           fi
           printf '%s' "${SHORT_DRAFT_HISTORY:-[]}" > "$RUNNER_TEMP/short-history.json"
           delivery=()
-          if [[ "$SHORT_TELEGRAM_ENABLED" == true ]]; then
+          if [[ "$SHORT_TELEGRAM_ENABLED" == true || "$GTA_REELS_ENABLED" == true ]]; then
             sudo apt-get update -qq
             sudo apt-get install -y ffmpeg fonts-noto-core
             delivery+=(--deliver --render-dir "$RUNNER_TEMP/short-draft")
@@ -51,6 +53,7 @@ jobs:
             "$RUNNER_TEMP/short-history.json" --summary \
             "${delivery[@]}" > short-selection.json
       - name: Look for open footage when no reviewed clip was selected
+        if: vars.GTA_REELS_ENABLED != 'true'
         run: |
           if [[ ! -f short-selection.json ]] || jq -e '.selected == null' short-selection.json >/dev/null; then
             python footage_scout.py --snapshot trend-snapshot.json > footage-leads.json

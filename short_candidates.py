@@ -8,7 +8,7 @@ import subprocess
 from urllib.parse import urlsplit
 import wave
 
-from short_render import render_short, suggest_start
+from short_render import gta_start, render_short, suggest_start
 from short_selection import select_short
 
 EDITORIAL_WEIGHTS = {
@@ -173,17 +173,18 @@ if __name__ == "__main__":
         source = folder / "source-media"
         # The reviewed media URL must resolve directly to a file.
         downloaded = subprocess.run([
-            "curl", "--proto", "=https", "--fail", "--silent", "--max-time", "90",
-            "--max-filesize", "60000000", "--output", str(source), "--",
+            "curl", "--proto", "=https", "--fail", "--silent", "--max-time", "300",
+            "--max-filesize", "1000000000" if candidate["category"] == "GTA 6 gameplay" else "60000000", "--output", str(source), "--",
             candidate["media_url"],
-        ], capture_output=True, timeout=95)
+        ], capture_output=True, timeout=305)
         if downloaded.returncode:
             raise RuntimeError("Could not download the reviewed media file")
         draft = folder / "preview.mp4"
         duration = max(15, speech_duration + 0.25)
         start = candidate.get("start")
         if start is None:
-            start = suggest_start(source, duration)
+            picker = gta_start if candidate["category"] == "GTA 6 gameplay" else suggest_start
+            start = picker(source, duration)
         render_short(source, draft, start, duration, plan["hook"], narration=narration,
                      script=plan["script"])
         probe = json.loads(subprocess.check_output([
@@ -203,7 +204,7 @@ if __name__ == "__main__":
             metadata.update({key: plan[key] for key in ("title", "hook", "script", "analysis")})
             metadata["sources"] = candidate["fact_sources"]
             job = http("POST", worker + "/render/short",
-                       headers=auth, data=metadata)
+                       headers={"Authorization": "Bearer " + identity(worker)}, data=metadata)
             if not job.get("skip"):
                 inspect_and_deliver(worker, job["id"], draft)
     if args.summary and candidate is not None:

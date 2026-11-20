@@ -1,5 +1,15 @@
 # Daily video bot — credentials stay outside GitHub
 
+## Daily GTA 6 Reel
+
+Enable `GTA_REELS_ENABLED=true` in both Cloudflare Worker variables and GitHub Actions repository variables after deploying this branch's Worker and merging the workflow into `main`. The scout runs at 06:07 India time. This mode selects one reviewed GTA recording, renders a vertical highlight with commentary and captions, and requests Telegram approval around 09:00 India time. Each approved clip targets YouTube and Instagram. The example YouTube visibility is private. Scheduling and generation depend on free service availability.
+
+Set `CLOUDFLARE_WORKER_URL` in GitHub. Keep provider and social credentials in Cloudflare. For the first preview, set the Worker variable `SHORT_PREVIEW_TEST=true` and manually run **Scout trends for Shorts** on main. The test sends a private preview without publish buttons. Set the test flag to false for daily approvals.
+
+In the Worker's private `REVIEWED_SHORT_SOURCES` JSON array, use the [GTA source template](examples/gta-source.json). Replace the placeholders with the stream's public YouTube ID, the creator's direct HTTPS MP4 download, the public credit and sources, and private evidence of reuse permission. Set each clearance to true only after checking it. The bot selects eligible entries tagged exactly `GTA 6 gameplay`, skips recently used streams, and holds when the queue is empty. A YouTube watch URL identifies the recording. The media download must point directly to a file up to 1 GB. Remove the entry to withdraw it before publication.
+
+The editor compares two-second audio peaks against the previous minute for up to two hours of footage and leaves five seconds before the selected reaction where possible. A numeric `start` in a catalog entry overrides automatic timing. This approach is inspired by [NeonClipping](https://github.com/iamajmeena/neonclipping). The inspector reviews six frames and the audio before sending the rendered file for approval.
+
 This revision uses **Cloudflare Workers Free + D1 Free** for private configuration, script preparation, Telegram approval, job state, and publishing. GitHub Actions only renders video. No account token or provider key is configured as a GitHub Secret or sent to its runner.
 
 The trend-Reel branch now includes rights-gated selection, editorial scoring, original script and narration generation from reviewed facts, timed captions, inspection, Telegram approval, and owner-decision learning. The stage-by-stage design and remaining work are in [CONTENT_ENGINE.md](CONTENT_ENGINE.md). Redeploy the Worker before using this update; scheduled publishing remains disabled until a live preview is checked.
