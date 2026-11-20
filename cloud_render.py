@@ -95,7 +95,7 @@ def main():
     inspect_and_deliver(worker, job['id'], out / 'video.mp4')
 
 
-def inspect_and_deliver(worker, job_id, path):
+def inspect_and_deliver(worker, job_id, path, *, gameplay_duration=None):
     video = path.read_bytes()
     if not 0 < len(video) <= 19_000_000:
         raise RuntimeError("Preview must be below 19 MB")
@@ -104,7 +104,9 @@ def inspect_and_deliver(worker, job_id, path):
     duration = float(details['format']['duration'])
     streams = details['streams']
     visual = next(stream for stream in streams if stream['codec_type'] == 'video')
-    if not 15 <= duration <= 32 or visual['width'] != 720 or visual['height'] != 1280 or not any(stream['codec_type'] == 'audio' for stream in streams):
+    valid_duration = (3 <= gameplay_duration <= 180 and abs(duration-gameplay_duration) < .15
+                      if gameplay_duration is not None else 15 <= duration <= 32)
+    if not valid_duration or visual['width'] != 720 or visual['height'] != 1280 or not any(stream['codec_type'] == 'audio' for stream in streams):
         raise RuntimeError('Draft failed duration, portrait format, or audio inspection')
     frames = []
     for fraction in (0.04, 0.18, 0.35, 0.52, 0.72, 0.92):
@@ -112,7 +114,7 @@ def inspect_and_deliver(worker, job_id, path):
             '-frames:v', '1', '-vf', 'scale=360:640', '-f', 'image2pipe', '-vcodec', 'mjpeg', '-q:v', '4', '-threads', '1', '-'])
         frames.append(base64.b64encode(frame).decode('ascii'))
     audio = subprocess.check_output(['ffmpeg', '-v', 'error', '-i', str(path), '-vn', '-ac', '1',
-        '-ar', '16000', '-b:a', '48k', '-f', 'mp3', '-'])
+        '-ar', '16000', '-b:a', '24k' if gameplay_duration else '48k', '-f', 'mp3', '-'])
     inspection = http('POST', worker + '/render/inspect/' + job_id,
         headers={'Authorization': 'Bearer ' + identity(worker)}, data={
             'sha256': hashlib.sha256(video).hexdigest(), 'duration': duration, 'frames': frames,

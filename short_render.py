@@ -23,9 +23,7 @@ def gta_levels(source, *, ffmpeg="ffmpeg"):
             if line.startswith("lavfi.astats.Overall.RMS_level=")]
 
 
-def gta_windows(levels, duration, used=(), limit=40, movement=()):
-    """Return distinct peaks with setup and payoff, strongest first."""
-    last = len(levels) - 1 - math.ceil(duration)
+def gta_peaks(levels, movement):
     scored = []
     for i in range(1, len(levels)-1):
         prior = levels[max(0, i-60):i]
@@ -34,7 +32,37 @@ def gta_windows(levels, duration, used=(), limit=40, movement=()):
         motion = movement[i] if i < len(movement) else 0
         if (energy < -46 or jump < 3) and motion < 12:
             continue
-        scored.append((jump + .35 * energy + min(35, motion)*.65, min(last, max(0, i-5))))
+        scored.append((jump + .35 * energy + min(35, motion)*.65, i))
+    return scored
+
+
+def gameplay_moments(levels, movement, used=(), limit=40):
+    """Group nearby reactions until activity subsides, then include setup and payoff."""
+    end = len(levels) - 1
+    events = []
+    for score, second in gta_peaks(levels, movement):
+        if events and second <= events[-1][1] + 5:
+            first, _, best_score, peak = events[-1]
+            events[-1] = (first, second, max(score, best_score), second if score > best_score else peak)
+        else:
+            events.append((second, second, score, second))
+    selected = []
+    for first, last, score, peak in sorted(events, key=lambda e: -e[2]):
+        start, stop = max(0, first-4), min(end, last+3)
+        if stop-start > 180:
+            start = min(max(start, peak-90), stop-180)
+            stop = start+180
+        if stop-start < 3 or any(start < b and a < stop for a,b in (*used, *selected)):
+            continue
+        selected.append((start, stop))
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def gta_windows(levels, duration, used=(), limit=40, movement=()):
+    last = len(levels) - 1 - math.ceil(duration)
+    scored = [(score, min(last, max(0, i-5))) for score, i in gta_peaks(levels, movement)]
     starts = []
     for score, start in sorted(scored, reverse=True):
         if start >= 0 and all(abs(start-other) >= duration for other in (*used, *starts)):
@@ -54,7 +82,7 @@ def gta_start(source, duration, *, ffmpeg="ffmpeg"):
 def suggest_start(source, duration, *, ffmpeg="ffmpeg"):
     """Place the strongest sustained audio moment after a short setup."""
     if not 15 <= duration <= 32:
-        raise ValueError("Choose a duration of 15–32 seconds")
+        raise ValueError("Choose a duration of 15â€“32 seconds")
     rate = 8000
     raw = subprocess.check_output([
         ffmpeg, "-nostdin", "-loglevel", "error", "-protocol_whitelist", "file",
@@ -81,7 +109,7 @@ def suggest_start(source, duration, *, ffmpeg="ffmpeg"):
 
 def render_short(source, destination, start, duration, hook, *, narration, script, ffmpeg="ffmpeg"):
     if not math.isfinite(start) or start < 0 or not 15 <= duration <= 32:
-        raise ValueError("Choose a nonnegative start and a duration of 15–32 seconds")
+        raise ValueError("Choose a nonnegative start and a duration of 15â€“32 seconds")
     if not hook.strip() or len(hook.splitlines()) > 2 or any(
         len(line) > 32 for line in hook.splitlines()
     ):

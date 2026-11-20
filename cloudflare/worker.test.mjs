@@ -26,12 +26,12 @@ test('preview cannot bypass inspection or substitute a different video after ins
   assert.equal(mutations, 0);
 });
 
-test('an inspected test preview notifies Telegram once and cannot be approved', async () => {
-  const id = '2026-11-04-short-test';
+for (const live of [false, true]) test('GTA preview sends once with correct approval mode: ' + live, async () => {
+  const id = live ? '2026-11-04-g01-short' : '2026-11-04-short-test';
   const data = new TextEncoder().encode('inspected video');
   const sha256 = Buffer.from(await crypto.subtle.digest('SHA-256', data)).toString('hex');
   const job = { run_id: '1', status: 'generating', expires: Date.now() / 1000 + 1000,
-    metadata: JSON.stringify({ inspection: { passed: true, sha256 } }) };
+    metadata: JSON.stringify({ gta: true, title: "GTA VI", inspection: { passed: true, sha256 } }) };
   const DB = { prepare(sql) { return { bind(...values) { return {
     async first() { return job; },
     async run() {
@@ -45,9 +45,10 @@ test('an inspected test preview notifies Telegram once and cannot be approved', 
   globalThis.fetch = async (url, { body }) => {
     assert.equal(url, 'https://api.telegram.org/botprivate/sendVideo');
     assert.equal(body.get('chat_id'), '7');
-    assert.equal(body.has('reply_markup'), false);
+    assert.equal(body.has('reply_markup'), live);
+    if (live) assert.equal(JSON.parse(body.get('reply_markup')).inline_keyboard[0][0].callback_data, 'approve:' + id);
     assert.equal(body.has('disable_notification'), false);
-    assert.match(body.get('caption'), /cannot be published/);
+    assert.match(body.get('caption'), live ? /Approve this file/ : /cannot be published/);
     sends++;
     return Response.json({ ok: true, result: { video: { file_id: 'file' }, message_id: 42 } });
   };
@@ -59,9 +60,9 @@ test('an inspected test preview notifies Telegram once and cannot be approved', 
         { run_id: '1' }, id)).json(), { received: true });
     }
     assert.equal(sends, 1);
-    assert.equal(job.status, 'test_sent');
+    assert.equal(job.status, live ? 'pending' : 'test_sent');
     const callback = { from: { id: 7 }, message: { chat: { id: 7, type: 'private' }, message_id: 42 } };
-    assert.equal(allowedApproval(callback, job, env), false);
+    assert.equal(allowedApproval(callback, job, env), live);
   } finally { globalThis.fetch = oldFetch; }
 });
 

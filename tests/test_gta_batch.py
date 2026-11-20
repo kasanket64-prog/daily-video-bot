@@ -1,6 +1,6 @@
 import unittest
 
-from short_render import gta_windows
+from short_render import gameplay_moments, gta_windows
 
 
 class GtaWindowsTests(unittest.TestCase):
@@ -20,3 +20,13 @@ class GtaWindowsTests(unittest.TestCase):
         motion[50] = 30
         self.assertEqual(gta_windows(levels, 24, movement=motion), [45])
         self.assertEqual(gta_windows(levels, 24, used=[45], movement=motion), [])
+
+    def test_moment_ends_after_activity_and_respects_history(self):
+        motion = [0.] * 200
+        motion[21] = 40
+        motion[60:85] = [30.] * 25
+        levels = [-70.] * len(motion)
+        spans = gameplay_moments(levels, motion)
+        self.assertEqual(spans, [(17, 24), (56, 87)])
+        self.assertEqual(gameplay_moments(levels, motion, used=[(82, 108)]), spans[:1])
+        self.assertLessEqual(max(b-a for a,b in gameplay_moments([-70.]*300, [30.]*300)), 180)
