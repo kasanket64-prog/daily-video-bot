@@ -197,7 +197,7 @@ test('identity signatures are verified cryptographically', async () => {
     assert.deepEqual(await (await worker.fetch(request(manual, '/render/short-history'), testEnv)).json(), []);
     const gtaEnv = { ...testEnv, GTA_REELS_ENABLED: 'true', SHORT_PREVIEW_TEST: 'false' };
     assert.deepEqual(await (await worker.fetch(request(manual, '/render/short-inputs'), gtaEnv)).json(),
-      { items: [], catalog: [], gta: true });
+      { items: [], catalog: [], gta: true, previewOnly: false, batchDay: new Date(Date.now() + 19800000).toISOString().slice(0,10) });
     assert.equal((await worker.fetch(request(token), gtaEnv)).status, 403);
     let tick;
     await worker.scheduled(null, testEnv, { waitUntil(promise) { tick = promise; } });

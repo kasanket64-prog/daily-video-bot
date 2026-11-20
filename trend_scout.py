@@ -51,7 +51,7 @@ def main():
             raise RuntimeError("Set GTA_REELS_ENABLED to the same value in GitHub and Cloudflare")
         args.cloud_catalog.write_text(json.dumps(inputs["catalog"]), encoding="utf-8")
         snapshot = rank_videos(inputs["items"], observed_at=datetime.now(timezone.utc))
-        print(json.dumps({"region": region, **snapshot}, ensure_ascii=True, indent=2))
+        print(json.dumps({"region": region, "batchDay": inputs.get("batchDay"), "previewOnly": inputs.get("previewOnly", False), **snapshot}, ensure_ascii=True, indent=2))
         return
     key = os.environ.get("YOUTUBE_DATA_API_KEY")
     if not key:

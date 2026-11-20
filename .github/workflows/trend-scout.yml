@@ -17,7 +17,7 @@ jobs:
   scout:
     if: (vars.GTA_REELS_ENABLED != 'true' || github.event.repository.private == false) && (github.event_name == 'workflow_dispatch' || vars.TREND_SCOUT_ENABLED == 'true' || vars.GTA_REELS_ENABLED == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 175
     env:
       GTA_REELS_ENABLED: ${{ vars.GTA_REELS_ENABLED }}
     steps:
@@ -48,6 +48,11 @@ jobs:
             sudo apt-get update -qq
             sudo apt-get install -y ffmpeg fonts-noto-core
             delivery+=(--deliver --render-dir "$RUNNER_TEMP/short-draft")
+          fi
+          if [[ "$GTA_REELS_ENABLED" == true ]]; then
+            python -m pip install faster-whisper==1.2.1
+            python gta_batch.py trend-snapshot.json "$RUNNER_TEMP/reviewed-sources.json" "$RUNNER_TEMP/short-draft" > short-selection.json
+            exit 0
           fi
           python short_candidates.py trend-snapshot.json "$RUNNER_TEMP/reviewed-sources.json" \
             "$RUNNER_TEMP/short-history.json" --summary \

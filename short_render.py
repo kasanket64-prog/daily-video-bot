@@ -10,7 +10,7 @@ import sys
 from tempfile import TemporaryDirectory
 
 
-def gta_start(source, duration, *, ffmpeg="ffmpeg"):
+def gta_levels(source, *, ffmpeg="ffmpeg"):
     """Rank two-second reactions against the previous minute of game audio."""
     result = subprocess.run([
         ffmpeg, "-nostdin", "-v", "error", "-protocol_whitelist", "file",
@@ -19,18 +19,36 @@ def gta_start(source, duration, *, ffmpeg="ffmpeg"):
         "astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-",
         "-f", "null", "-",
     ], capture_output=True, text=True, check=True, timeout=480)
-    levels = [max(-80., float(line.split("=")[1])) for line in result.stdout.splitlines()
-              if line.startswith("lavfi.astats.Overall.RMS_level=")]
-    # Ignore the final possibly partial second when placing the cut.
+    return [max(-80., float(line.split("=")[1])) for line in result.stdout.splitlines()
+            if line.startswith("lavfi.astats.Overall.RMS_level=")]
+
+
+def gta_windows(levels, duration, used=(), limit=40, movement=()):
+    """Return distinct peaks with setup and payoff, strongest first."""
     last = len(levels) - 1 - math.ceil(duration)
-    if last < 0 or max(levels) < -46:
-        raise ValueError("Gameplay has insufficient duration or audible reaction cues")
-    def reaction(i):
-        prior = levels[max(0, i-60):i] or levels[:1]
+    scored = []
+    for i in range(1, len(levels)-1):
+        prior = levels[max(0, i-60):i]
         energy = (levels[i] + levels[i+1]) / 2
-        return energy - max(-50, sum(prior)/len(prior)) + 0.35 * energy
-    peak = max(range(len(levels)-1), key=reaction)
-    return min(last, max(0, peak - 5))
+        jump = energy - max(-50, sum(prior)/len(prior))
+        motion = movement[i] if i < len(movement) else 0
+        if (energy < -46 or jump < 3) and motion < 12:
+            continue
+        scored.append((jump + .35 * energy + min(35, motion)*.65, min(last, max(0, i-5))))
+    starts = []
+    for score, start in sorted(scored, reverse=True):
+        if start >= 0 and all(abs(start-other) >= duration for other in (*used, *starts)):
+            starts.append(start)
+            if len(starts) == limit:
+                break
+    return starts
+
+
+def gta_start(source, duration, *, ffmpeg="ffmpeg"):
+    starts = gta_windows(gta_levels(source, ffmpeg=ffmpeg), duration, limit=1)
+    if not starts:
+        raise ValueError("No distinct gameplay highlight")
+    return starts[0]
 
 
 def suggest_start(source, duration, *, ffmpeg="ffmpeg"):
