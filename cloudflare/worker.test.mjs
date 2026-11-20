@@ -14,6 +14,20 @@ test('inspector requires every explicit check and never treats missing or string
   assert.equal(inspectionPassed(null), false);
 });
 
+test('owner review binds the upload key and inspection to one file and expires', async () => {
+  const key = '1'.repeat(64);
+  const keyHash = Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key))).toString('hex');
+  const cfg = { GTA_REELS_ENABLED:'true', SHORT_PREVIEW_TEST:'true', OWNER_REVIEW_REEL:{
+    id:'2026-11-21-g40-short', sha256:'2'.repeat(64), keyHash, expires:Date.now()/1000+60
+  }};
+  const request = (token) => new Request('https://example.com/owner-review/inspect', {method:'POST',
+    headers:{Authorization:'Bearer '+token,'Content-Length':'77'},body:JSON.stringify({sha256:'3'.repeat(64)})});
+  assert.equal((await worker.fetch(request('0'.repeat(64)),cfg)).status,403);
+  assert.equal((await worker.fetch(request(key),cfg)).status,409);
+  cfg.OWNER_REVIEW_REEL.expires = 0;
+  assert.equal((await worker.fetch(request(key),cfg)).status,404);
+});
+
 test('preview cannot bypass inspection or substitute a different video after inspection', async () => {
   const data = new TextEncoder().encode('different video');
   let mutations = 0;
