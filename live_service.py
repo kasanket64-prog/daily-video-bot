@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parent
 ORIGIN = "https://daily-video-approvals.kasanket64.workers.dev"
 CHANNEL = "UCeoZXkaJDtdTHafgoZeDcAA"
 lock = threading.Lock()
+last_result = None
 spec = importlib.util.spec_from_file_location("neon_highlights", ROOT / "third-party/neonclipping/highlights.py")
 neon = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(neon)
@@ -113,6 +114,7 @@ def inspection(path, duration):
 
 
 def run(job):
+    global last_result
     result = {"delivered": 0, "held": 0, "state": "complete", "stage": "lookup"}
     try:
         history = post(job, "short-history", {})
@@ -181,13 +183,20 @@ def run(job):
                     result["delivered"] += 1
                 else:
                     result["held"] += 1
-    except Exception:
+    except Exception as error:
         result["state"] = "failed"
+        result["error_type"] = type(error).__name__
+        if hasattr(error, "code"):
+            result["http_status"] = error.code
     finally:
+        last_result = result
         try:
             post(job, "report", result)
-        except Exception:
-            pass
+        except Exception as error:
+            result["report_error"] = type(error).__name__
+            if hasattr(error, "code"):
+                result["report_status"] = error.code
+        print(json.dumps(result), flush=True)
         lock.release()
 
 
@@ -206,7 +215,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.reply(200 if self.path == "/health" else 404,
-                   {"engine": "NeonClipping", "revision": "3a3da401", "busy": lock.locked()} if self.path == "/health" else {})
+                   {"engine": "NeonClipping", "revision": "3a3da401", "busy": lock.locked(),
+                    "last_result": last_result} if self.path == "/health" else {})
 
     def do_POST(self):
         if self.path != "/watch":
