@@ -297,6 +297,10 @@ test('health never discloses credentials and disabled automation has no side eff
   assert.equal((await response.text()).includes('private-token'), false);
   const disabled = await worker.fetch(new Request('https://bot.workers.dev/render/job', { method: 'POST' }), privateEnv);
   assert.equal(disabled.status, 503);
+  const live = {...privateEnv,GTA_REELS_ENABLED:'true',SHORT_PREVIEW_TEST:'true',LIVE_WATCH_ENABLED:'true'};
+  assert.deepEqual(await (await worker.fetch(new Request('https://bot.workers.dev/health'),live)).json(),
+    {service:'daily-video-approvals',enabled:true});
+  assert.equal((await (await worker.fetch(new Request('https://bot.workers.dev/health'),{...live,LIVE_WATCH_ENABLED:'false'})).json()).enabled,false);
 });
 
 test('a pinned edit receives only its deployer-reviewed source interval without replacing an existing interval', async () => {
