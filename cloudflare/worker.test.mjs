@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker, { validateClaims, authenticate, validateMetadata, allowedApproval, parseTrends, prepareJob, uploadsComplete, fitnessTrends, selectFitnessClip, inspectionPassed, acceptPreview } from './worker.mjs';
 import {liveToken,validateLiveToken,restorePinnedSourceWindows} from './worker.mjs';
-import {validLivePlan} from './worker.mjs';
+import {validLivePlan,publishDestinations} from './worker.mjs';
 
 test('live editorial plans require bounded factual text and a visible facecam crop', () => {
   const good={usable:true,standout:true,highlight_type:'escape',title:'The red car gets away',hook:'Watch the red car',payoff:'The car escapes',facecam:{x:0,y:0,w:.25,h:.4}};
@@ -119,6 +119,27 @@ test('private connection checks refresh tokens without returning credentials or 
     assert.ok(!JSON.stringify([good,bad]).includes('private-'));
     assert.equal(calls,4);
   } finally {globalThis.fetch=oldFetch;}
+});
+
+test('a failed YouTube connection does not block an approved Instagram upload',async()=>{
+  const old=globalThis.fetch;let uploaded=false,processing=false;
+  const env={YOUTUBE_CLIENT_ID:'client',YOUTUBE_CLIENT_SECRET:'secret',YOUTUBE_REFRESH_TOKEN:'expired',
+    INSTAGRAM_ACCESS_TOKEN:'page-token',INSTAGRAM_USER_ID:'12345',META_API_VERSION:'v27.0',TELEGRAM_BOT_TOKEN:'bot-token',TELEGRAM_CHAT_ID:'7',
+    DB:{prepare(sql){return {bind(...values){return {async run(){if(sql.includes("instagram_state='processing'"))processing=true;return {meta:{changes:1}};}};}};}}};
+  globalThis.fetch=async(url,init)=>{
+    if(url==='https://oauth2.googleapis.com/token') return Response.json({error:'invalid_grant'},{status:400});
+    if(url==='https://api.telegram.org/botbot-token/sendMessage') return Response.json({ok:true,result:{}});
+    if(url==='https://graph.facebook.com/v27.0/12345/media') return Response.json({id:'987',uri:'https://rupload.facebook.com/ig-api-upload/987'});
+    if(url==='https://api.telegram.org/botbot-token/getFile') return Response.json({ok:true,result:{file_path:'video/test.mp4'}});
+    if(url==='https://api.telegram.org/file/botbot-token/video/test.mp4') return new Response('inspected-video');
+    assert.equal(url,'https://rupload.facebook.com/ig-api-upload/987');
+    assert.equal(init.method,'POST');uploaded=true;return Response.json({success:true});
+  };
+  try{
+    await publishDestinations(env,{id:'approved-clip',status:'approved',size:15,file_id:'file'},
+      {destinations:['youtube','instagram'],title:'Approved clip',description:'Source credit'});
+    assert.equal(uploaded,true);assert.equal(processing,true);
+  }finally{globalThis.fetch=old;}
 });
 
 for (const live of [false, true]) test('GTA preview sends once with correct approval mode: ' + live, async () => {
