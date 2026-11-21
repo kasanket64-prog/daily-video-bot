@@ -881,7 +881,7 @@ export default {
     const cartoonFailureRoute = url.pathname === '/render/cartoon-failure';
     const cartoonFileRoute = /^\/render\/(?:preview|inspect)\/\d{4}-\d{2}-\d{2}-cartoon-(?:episode|short)$/.test(url.pathname);
     const cartoonRoute = cartoonStoryRoute || cartoonJobsRoute || cartoonFailureRoute || cartoonFileRoute;
-    if (url.pathname === '/health' && request.method === 'GET') return json({ service: 'daily-video-approvals', enabled: enabled || cartoonsEnabled || (gta && !previewTest) });
+    if (url.pathname === '/health' && request.method === 'GET') return json({ service: 'daily-video-approvals', enabled: enabled || cartoonsEnabled || (gta && (!previewTest || env.LIVE_WATCH_ENABLED === 'true')) });
     try {
       if (cartoonRoute && !cartoonsEnabled) return json({ error: 'Cartoon automation is disabled' }, 503);
       if (url.pathname.startsWith('/live/')) return await liveRoute(request,env,url.pathname);
