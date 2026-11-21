@@ -5,9 +5,9 @@ import {liveToken,validateLiveToken,restorePinnedSourceWindows} from './worker.m
 import {validLivePlan} from './worker.mjs';
 
 test('live editorial plans require bounded factual text and a visible facecam crop', () => {
-  const good={usable:true,highlight_type:'escape',title:'The red car gets away',hook:'Watch the red car',payoff:'The car escapes',facecam:{x:0,y:0,w:.25,h:.4}};
+  const good={usable:true,standout:true,highlight_type:'escape',title:'The red car gets away',hook:'Watch the red car',payoff:'The car escapes',facecam:{x:0,y:0,w:.25,h:.4}};
   assert.equal(Boolean(validLivePlan(good)),true);
-  for(const change of [{usable:false},{highlight_type:undefined},{highlight_type:'idle_stakeout'},{hook:'a'.repeat(33)},{payoff:''},{facecam:{x:.9,y:0,w:.25,h:.4}},{facecam:{x:0,y:0,w:0,h:1}},{title:'two\nlines'}]){
+  for(const change of [{usable:false},{standout:false},{standout:undefined},{standout:'true'},{highlight_type:undefined},{highlight_type:'idle_stakeout'},{hook:'a'.repeat(33)},{payoff:''},{facecam:{x:.9,y:0,w:.25,h:.4}},{facecam:{x:0,y:0,w:0,h:1}},{title:'two\nlines'}]){
     assert.equal(Boolean(validLivePlan({...good,...change})),false);
   }
 });
