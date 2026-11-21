@@ -155,7 +155,11 @@ def run(job):
                     if not slots:
                         break
                     result["stage"] = "plan_frames"
-                    frames,_ = live_evidence(source,start,24,width=640)
+                    try:
+                        frames,_ = live_evidence(source,start,24,width=640)
+                    except subprocess.CalledProcessError:
+                        result["damaged_windows"] = result.get("damaged_windows",0) + 1
+                        continue
                     result["stage"] = "plan"
                     plan = post(job,"plan",{"creator":user,"frames":frames})
                     if plan.get("usable") is not True:
