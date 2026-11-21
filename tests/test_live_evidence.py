@@ -29,6 +29,10 @@ class LiveEvidenceTests(unittest.TestCase):
             self.assertGreater(rms(samples[57600:81600]),.02)
             self.assertLess(max(abs(x) for x in samples),.98)
             self.assertAlmostEqual(len(samples)/48000,2,delta=.05)
+            background=subprocess.check_output(["ffmpeg","-v","error","-ss","0.5","-i",str(output),
+                "-frames:v","1","-vf","crop=16:16:8:1080,format=rgb24","-f","rawvideo","-"])
+            self.assertEqual(len(background),16*16*3)
+            self.assertLessEqual(max(background),8)
             with self.assertRaisesRegex(ValueError,"Silent live export"):
                 render_live(source,(0,1),folder,{"credit":"Ad | Test","user":"test"},
                     {"hook":"Silent source","facecam":{"x":0,"y":0,"w":.3,"h":.5}})

@@ -234,7 +234,7 @@ def render_live(source, moment, folder, policy, plan, *, ffmpeg="ffmpeg", ffprob
     x,y,cw,ch = [int(box[key]*size)//2*2 for key,size in (("x",w),("y",h),("w",w),("h",h))]
     layout = (f"[0:v]split[face][game];[face]crop={cw}:{ch}:{x}:{y},"
               "scale=720:380:force_original_aspect_ratio=decrease,pad=720:380:(ow-iw)/2:(oh-ih)/2,"
-              "setsar=1,pad=720:1280:0:110:color=0x17131e[top];"
+              "setsar=1,pad=720:1280:0:110:color=black[top];"
               "[game]scale=720:410:force_original_aspect_ratio=decrease,pad=720:410:(ow-iw)/2:(oh-ih)/2,setsar=1[play];"
               "[top][play]overlay=0:525,drawtext=textfile=credit.txt:expansion=none:"
               "fontcolor=white:fontsize=28:x=34:y=36,"
