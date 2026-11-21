@@ -224,3 +224,35 @@ def live_evidence(path, start, duration, *, width, ffmpeg="ffmpeg"):
                        "-f", "image2pipe", "-"]) for t in (.04, .18, .35, .52, .72, .92)]
     audio = encoded(["-ss",str(start),"-i", str(path),"-t",str(duration),"-vn", "-ac", "1", "-ar", "16000", "-b:a", "24k", "-f", "mp3", "-"])
     return frames, audio
+
+
+def render_live(source, moment, folder, policy, plan, *, ffmpeg="ffmpeg", ffprobe="ffprobe"):
+    streams = json.loads(subprocess.check_output([ffprobe, "-v", "error", "-show_streams", "-of", "json", str(source)], timeout=15))["streams"]
+    video = next(s for s in streams if s["codec_type"] == "video")
+    w, h = video["width"], video["height"]
+    box = plan["facecam"]
+    x,y,cw,ch = [int(box[key]*size)//2*2 for key,size in (("x",w),("y",h),("w",w),("h",h))]
+    layout = (f"[0:v]split[face][game];[face]crop={cw}:{ch}:{x}:{y},"
+              "scale=720:380:force_original_aspect_ratio=decrease,pad=720:380:(ow-iw)/2:(oh-ih)/2,"
+              "setsar=1,pad=720:1280:0:110:color=0x17131e[top];"
+              "[game]scale=720:410:force_original_aspect_ratio=decrease,pad=720:410:(ow-iw)/2:(oh-ih)/2,setsar=1[play];"
+              "[top][play]overlay=0:525,drawtext=textfile=credit.txt:expansion=none:"
+              "fontcolor=white:fontsize=28:x=34:y=36,"
+              "drawtext=textfile=hook.txt:expansion=none:fontcolor=white:fontsize=38:x=34:y=990,"
+              "drawtext=textfile=source.txt:expansion=none:fontcolor=white:fontsize=26:x=34:y=1200[out]")
+    (folder / "credit.txt").write_text(policy["credit"], encoding="utf-8")
+    (folder / "hook.txt").write_text(plan["hook"], encoding="utf-8")
+    (folder / "source.txt").write_text("Watch live: twitch.tv/" + policy["user"], encoding="utf-8")
+    output = folder / "reel.mp4"
+    duration = moment[1] - moment[0]
+    subprocess.run([ffmpeg, "-v", "error", "-y", "-nostdin", "-threads", "2", "-filter_complex_threads", "2",
+            "-ss", str(moment[0]), "-i", str(source), "-filter_complex", layout,
+            "-map", "[out]", "-map", "0:a:0", "-t", str(duration), "-r", "30",
+            "-c:v", "libx264", "-threads", "2", "-preset", "veryfast", "-crf", "23",
+            "-maxrate", "2200k", "-bufsize", "2200k", "-pix_fmt", "yuv420p",
+            "-af", "loudnorm=I=-16:TP=-1.5:LRA=11", "-ar", "48000",
+            "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", str(output)],
+            cwd=folder, check=True, timeout=160, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    if max(gta_levels(output, ffmpeg=ffmpeg), default=-80) < -50:
+        raise ValueError("Silent live export")
+    return output

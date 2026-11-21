@@ -18,7 +18,7 @@ from urllib.error import HTTPError
 
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from yt_dlp import YoutubeDL
-from short_render import live_evidence
+from short_render import live_evidence, render_live
 
 ROOT = Path(__file__).resolve().parent
 ORIGIN = "https://daily-video-approvals.kasanket64.workers.dev"
@@ -81,34 +81,6 @@ def ffmpeg(args, cwd):
 def probe(path):
     return json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-show_format",
                       "-show_streams", "-of", "json", str(path)], timeout=15))
-
-
-def render(source, moment, folder, policy, plan):
-    streams = probe(source)["streams"]
-    video = next(s for s in streams if s["codec_type"] == "video")
-    w, h = video["width"], video["height"]
-    box = plan["facecam"]
-    x,y,cw,ch = [int(box[key]*size)//2*2 for key,size in (("x",w),("y",h),("w",w),("h",h))]
-    layout = (f"[0:v]split[face][game];[face]crop={cw}:{ch}:{x}:{y},"
-              "scale=720:380:force_original_aspect_ratio=decrease,pad=720:380:(ow-iw)/2:(oh-ih)/2,"
-              "setsar=1,pad=720:1280:0:110:color=0x17131e[top];"
-              "[game]scale=720:410:force_original_aspect_ratio=decrease,pad=720:410:(ow-iw)/2:(oh-ih)/2,setsar=1[play];"
-              "[top][play]overlay=0:525,drawtext=textfile=credit.txt:expansion=none:"
-              "fontcolor=white:fontsize=28:x=34:y=36,"
-              "drawtext=textfile=hook.txt:expansion=none:fontcolor=white:fontsize=38:x=34:y=990,"
-              "drawtext=textfile=source.txt:expansion=none:fontcolor=white:fontsize=26:x=34:y=1200[out]")
-    (folder / "credit.txt").write_text(policy["credit"], encoding="utf-8")
-    (folder / "hook.txt").write_text(plan["hook"], encoding="utf-8")
-    (folder / "source.txt").write_text("Watch live: twitch.tv/" + policy["user"], encoding="utf-8")
-    output = folder / "reel.mp4"
-    duration = moment[1] - moment[0]
-    ffmpeg(["-ss", str(moment[0]), "-i", str(source), "-f", "lavfi", "-i",
-            "anullsrc=channel_layout=mono:sample_rate=48000", "-filter_complex", layout,
-            "-map", "[out]", "-map", "1:a", "-t", str(duration), "-r", "30",
-            "-c:v", "libx264", "-threads", "2", "-preset", "veryfast", "-crf", "23",
-            "-maxrate", "2200k", "-bufsize", "2200k", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "48k", "-movflags", "+faststart", str(output)], folder)
-    return output
 
 
 def inspection(path, duration):
@@ -195,16 +167,16 @@ def run(job):
                         credit=policy["credit"], source_facts=policy["facts"],
                         sources=[policy["campaign"], "https://www.twitch.tv/" + user],
                         title=plan["title"], hook=plan["hook"],
-                        script="Muted editorial highlight. " + plan["payoff"], clipLanguage="en",
+                        script="Editorial summary of the source highlight. " + plan["payoff"], clipLanguage="en",
                         analysis=dict(angle=plan["payoff"][:240], audience="GTA VI viewers",
                         story_arc=plan["payoff"][:240], emotion="Surprise",
-                        sound_plan="Muted stream audio", cta="Watch the outcome"))
+                        sound_plan="Original synchronized stream commentary and gameplay audio", cta="Watch the outcome"))
                     result["stage"] = "reservation"
                     reservation = post(job,"short",metadata)
                     if reservation.get("skip"):
                         continue
                     result["stage"] = "render"
-                    output = render(source,(start,stop),folder,policy,plan)
+                    output = render_live(source,(start,stop),folder,policy,plan)
                     raw,review = inspection(output,24)
                     result["stage"] = "inspection"
                     approved = post(job,"inspect/"+reservation["id"],review)
