@@ -1,4 +1,5 @@
-// Account tokens stay in Worker secrets. Never return them to the renderer.
+// Account tokens stay in Worker secrets or encrypted storage. Never return them to the renderer.
+import {connectRoute,issueConnectLink,socialEnv} from './connect.mjs';
 const MAX_VIDEO = 19_000_000;
 const encoder = new TextEncoder();
 const issuer = 'https://token.actions.githubusercontent.com';
@@ -533,6 +534,15 @@ async function webhook(request, env, allowedIds) {
   if (!env.TELEGRAM_WEBHOOK_SECRET || request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== env.TELEGRAM_WEBHOOK_SECRET) return json({ error: 'Denied' }, 403);
   const callback = (await request.json()).callback_query;
   if (!callback) return json({ ok: true });
+  if (callback.data === 'connect-accounts' && env.SOCIAL_TOKEN_KEY &&
+      String(callback.from?.id) === String(env.TELEGRAM_USER_ID) &&
+      String(callback.message?.chat?.id) === String(env.TELEGRAM_CHAT_ID) && callback.message?.chat?.type === 'private') {
+    const url=await issueConnectLink(env);
+    await telegram(env,'sendMessage',{chat_id:env.TELEGRAM_CHAT_ID,text:'Your private account setup link expires in one hour. Confirm the destination account before enabling Telegram-approved uploads.',
+      reply_markup:{inline_keyboard:[[{text:'Connect publishing accounts',url}]]}});
+    await telegram(env,'answerCallbackQuery',{callback_query_id:callback.id,text:'Private setup link sent.'});
+    return json({ok:true});
+  }
   const match = /^(approve|reject):(\d{4}-\d{2}-\d{2}(?:(?:-g\d{2})?-short|-cartoon-(?:episode|short))?)$/.exec(callback.data || '');
   let accepted = false;
   const job = match ? await row(env, match[2]) : null;
@@ -604,6 +614,20 @@ async function publishInstagram(env, job, meta) {
   await message(env, `Instagram upload completed: ${result.id}`);
 }
 
+export async function publishDestinations(env,job,meta) {
+  for (const [platform,publish] of [['YouTube',publishYouTube],['Instagram',publishInstagram]]) {
+    try { await publish(env,job,meta); } catch {
+      const saved=await env.DB.prepare('INSERT OR IGNORE INTO settings(name,value) VALUES(?,?)')
+        .bind('failure:'+job.id+':'+platform,'notified').run();
+      if (saved.meta.changes) {
+        try { await telegram(env,'sendMessage',{chat_id:env.TELEGRAM_CHAT_ID,
+          text:`${platform} upload for ${job.id} needs attention. Approval is saved; the other connected destination can continue. Check this platform before retrying an interrupted upload.`,
+          ...(env.SOCIAL_TOKEN_KEY?{reply_markup:{inline_keyboard:[[{text:'Reconnect accounts',callback_data:'connect-accounts'}]]}}:{})}); } catch {}
+      }
+    }
+  }
+}
+
 async function tick(env) {
   if (env.LIVE_WATCH_ENABLED === 'true') {
     try { await wakeLive(env); } catch {
@@ -658,8 +682,7 @@ async function tick(env) {
             .bind('connections:' + job.id, 'notified').run();
           if (saved.meta.changes) await message(env, `Approval saved. Connect ${missing.join(' and ')} in Cloudflare to finish this upload. Completed platforms will not be uploaded twice.`);
         }
-        await publishYouTube(env, job, meta);
-        await publishInstagram(env, job, meta);
+        await publishDestinations(env,job,meta);
         const latest = await row(env, job.id);
         if (uploadsComplete(latest, env)) await env.DB.prepare("UPDATE jobs SET status='published' WHERE id=?").bind(job.id).run();
       }
@@ -861,11 +884,12 @@ async function ownerReview(request, env, action) {
       const saved = await env.DB.prepare('SELECT value FROM settings WHERE name=?').bind(name).first();
       status[name] = saved ? JSON.parse(saved.value) : null;
     }
-    const recent = await env.DB.prepare("SELECT id,status,message_id,metadata FROM jobs WHERE id LIKE ? AND json_extract(metadata,'$.liveChannel')=? ORDER BY id LIMIT 40")
+    const recent = await env.DB.prepare("SELECT id,status,message_id,metadata,youtube_state,youtube_id,instagram_state,instagram_id FROM jobs WHERE id LIKE ? AND json_extract(metadata,'$.liveChannel')=? ORDER BY id LIMIT 40")
       .bind(day()+'%',env.LIVE_CHANNEL_ID).all();
     const clips = recent.results.map(job => {
       const meta = JSON.parse(job.metadata);
-      return {id:job.id,status:job.status,message_id:job.message_id,title:meta.title,inspection:meta.inspection};
+      return {id:job.id,status:job.status,message_id:job.message_id,title:meta.title,inspection:meta.inspection,
+        youtube_state:job.youtube_state,youtube_id:job.youtube_id,instagram_state:job.instagram_state,instagram_id:job.instagram_id};
     });
     return json({enabled:env.LIVE_WATCH_ENABLED === 'true', ...status,clips});
   }
@@ -906,10 +930,12 @@ export default {
     const cartoonRoute = cartoonStoryRoute || cartoonJobsRoute || cartoonFailureRoute || cartoonFileRoute;
     if (url.pathname === '/health' && request.method === 'GET') return json({ service: 'daily-video-approvals', enabled: enabled || cartoonsEnabled || (gta && (!previewTest || env.LIVE_WATCH_ENABLED === 'true')) });
     try {
+      if (url.pathname === '/connect' || url.pathname.startsWith('/connect/')) return await connectRoute(request,env);
+      env = await socialEnv(env);
       if (cartoonRoute && !cartoonsEnabled) return json({ error: 'Cartoon automation is disabled' }, 503);
       if (url.pathname.startsWith('/live/')) return await liveRoute(request,env,url.pathname);
       if (url.pathname.startsWith('/owner-review/')) return await ownerReview(request, env, url.pathname.slice('/owner-review/'.length));
-      if ((enabled || cartoonsEnabled || (gta && (!previewTest || env.OWNER_REVIEW_REEL))) && url.pathname === '/telegram' && request.method === 'POST') return await webhook(request, env, previewTest ? ownerReviews(env).map(reel => reel.id) : undefined);
+      if ((enabled || cartoonsEnabled || (gta && (!previewTest || env.LIVE_WATCH_ENABLED === 'true' || env.OWNER_REVIEW_REEL))) && url.pathname === '/telegram' && request.method === 'POST') return await webhook(request, env, previewTest ? ownerReviews(env).map(reel => reel.id) : undefined);
       if (!gta && !enabled && !previewTest && !cartoonRoute) return json({ error: 'Automation is disabled' }, 503);
       if (request.method !== 'POST' || !(cartoonRoute || /^\/render\/(job|short|short-script|short-inputs|short-history|(preview|inspect)\/\d{4}-\d{2}-\d{2}(?:(?:-g\d{2})?-short(?:-test)?)?)$/.test(url.pathname))) return json({ error: 'Not found' }, 404);
       let claims;
@@ -946,5 +972,5 @@ export default {
       return json({ error: 'Operation failed. Check private configuration and free quotas.' }, 503);
     }
   },
-  async scheduled(event, env, context) { context.waitUntil(tick(env)); }
+  async scheduled(event, env, context) { context.waitUntil(socialEnv(env).then(connected=>tick(connected))); }
 };

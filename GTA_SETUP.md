@@ -16,6 +16,18 @@ The historical GitHub runner instructions below describe the development and pil
 
 GitHub renders gameplay in the cloud. Cloudflare holds the account credentials and records your Telegram decisions. Each daily run can prepare up to 40 distinct clips. Telegram sends each inspected live preview with its own approval buttons as soon as it is ready.
 
+## Connect accounts from a phone
+
+A bootstrap operator can issue a one-use link through `/connect/admin-link` using a separate, expiring `SOCIAL_SETUP_ADMIN` credential. Pinned-file upload keys cannot issue account-setup links. The link lasts one hour and opens a private phone-friendly page at the Worker's `/connect` path. It sets a Secure, HttpOnly session cookie and uses short-lived, single-use OAuth state bound to that session. Publishing error notifications include a Reconnect accounts button; only the configured Telegram owner in the private approval chat can use it to request a fresh link without the bootstrap credential.
+
+For Google, add the callback URI shown on the setup page to the existing YouTube OAuth client, then sign in with the channel owner's account. Grant upload and read-only channel access. The page displays the channel and upload visibility before its explicit enable button activates the connection. Google apps in Testing can issue seven-day refresh tokens, so check the Audience publishing status before reconnecting.
+
+For Instagram, configure a Meta app with Facebook Login for Business and the callback shown on the page. Save its app ID and secret only in the private form. Grant Instagram publishing and Page access, choose a linked professional Instagram account, and confirm it. The flow exchanges the user token for long-lived access, retrieves managed Pages, and checks the chosen account's publishing-limit endpoint before activation.
+
+`SOCIAL_TOKEN_KEY` is a 32-byte hex key kept in Worker Secrets. OAuth tokens and Meta app details are AES-GCM encrypted in D1 with record-name authentication. Confirmed connections override the legacy environment tokens for both scheduled publishing and private connection checks. Secrets are never included in HTML or returned to the renderer. New account grants still require the owner's Google or Meta sign-in and consent. Credentials may be revoked by either platform and cannot be guaranteed permanent.
+
+Only Telegram-approved files upload. An error at one connected destination does not prevent the other destination from attempting its approved upload. Interrupted uploads remain held for inspection instead of being blindly repeated.
+
 ## How the GTA workflow fits together
 
 One scheduled GitHub Actions job handles the heavy video work. One Cloudflare Worker with a D1 database handles credentials, review decisions and publishing. Telegram is the owner's review screen. Your computer can be off.
