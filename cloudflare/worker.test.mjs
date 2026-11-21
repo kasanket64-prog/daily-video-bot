@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker, { validateClaims, authenticate, validateMetadata, allowedApproval, parseTrends, prepareJob, uploadsComplete, fitnessTrends, selectFitnessClip, inspectionPassed, acceptPreview } from './worker.mjs';
-import {liveToken,validateLiveToken} from './worker.mjs';
+import {liveToken,validateLiveToken,restorePinnedSourceWindows} from './worker.mjs';
 
 test('live capability expires and cannot authorize another creator or a modified payload', async () => {
   const env={LIVE_CALLBACK_SECRET:'test'.repeat(16),LIVE_CHANNEL_ID:'UCeoZXkaJDtdTHafgoZeDcAA'};
@@ -267,4 +267,12 @@ test('health never discloses credentials and disabled automation has no side eff
   assert.equal((await response.text()).includes('private-token'), false);
   const disabled = await worker.fetch(new Request('https://bot.workers.dev/render/job', { method: 'POST' }), privateEnv);
   assert.equal(disabled.status, 503);
+});
+
+test('a pinned edit receives only its deployer-reviewed source interval without replacing an existing interval', async () => {
+  const writes=[];
+  const DB={prepare(sql){assert.match(sql,/start.*IS NULL/);return {bind(...args){return {async run(){writes.push(args);}}}}}};
+  const reel={id:'2026-11-21-g39-short',sha256:'b'.repeat(64),metadata:{source_window:{start:1795250845,span:180}}};
+  await restorePinnedSourceWindows({DB,OWNER_REVIEW_REEL:[reel,{...reel,sha256:'wrong'},{...reel,metadata:{source_window:{start:2,span:999}}}]});
+  assert.deepEqual(writes,[[1795250845,180,reel.id,reel.sha256]]);
 });

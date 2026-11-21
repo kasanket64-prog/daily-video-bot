@@ -347,7 +347,7 @@ async function prepareShort(request, env, claims) {
     Object.assign(meta, { start, duration, slot });
     const language = JSON.parse(input).clipLanguage;
     if (/^[a-z]{2,3}$/.test(language || '')) meta.language = language;
-    const saved = await env.DB.prepare("INSERT OR IGNORE INTO jobs(id,run_id,status,metadata,expires) SELECT ?,?,'generating',?,? WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE id LIKE '%-short' AND json_extract(metadata,'$.source_id')=? AND (json_extract(metadata,'$.start') IS NULL OR (json_extract(metadata,'$.start') < ? AND json_extract(metadata,'$.start') + coalesce(json_extract(metadata,'$.duration'),24) > ?)))")
+    const saved = await env.DB.prepare("INSERT OR IGNORE INTO jobs(id,run_id,status,metadata,expires) SELECT ?,?,'generating',?,? WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE id LIKE '%-short' AND json_extract(metadata,'$.source_id')=? AND (json_extract(metadata,'$.start') IS NULL OR (json_extract(metadata,'$.start') < ? AND json_extract(metadata,'$.start') + coalesce(json_extract(metadata,'$.source_span'),json_extract(metadata,'$.duration'),24) > ?)))")
       .bind(id, claims.run_id, JSON.stringify(meta), Math.floor(Date.now()/1000) + 144000, source_id, start + duration, start).run();
     return json(saved.meta.changes ? { id } : { skip: true });
   }
@@ -432,7 +432,7 @@ export async function shortHistory(env) {
   ).all();
   return results.map(({ id, metadata, status }) => ({ ...JSON.parse(metadata), id, outcome: status }))
     .filter(meta => meta.source_id && meta.category)
-    .map(meta => ({ id: meta.id, start: meta.start, duration: meta.duration, slot: meta.slot, source_id: meta.source_id, category: meta.category, story: meta.source_facts, hook: meta.hook, outcome: meta.outcome }));
+    .map(meta => ({ id: meta.id, start: meta.start, duration: meta.source_span ?? meta.duration, slot: meta.slot, source_id: meta.source_id, category: meta.category, story: meta.source_facts, hook: meta.hook, outcome: meta.outcome }));
 }
 
 export async function inspectDraft(request, env, claims, id) {
@@ -737,8 +737,20 @@ async function liveRoute(request, env, path) {
   return json({error:'Not found'},404);
 }
 
+export async function restorePinnedSourceWindows(env) {
+  for (const reel of ownerReviews(env)) {
+    const window = reel.metadata?.source_window;
+    if (!window || !Number.isInteger(window.start) || window.start < 1 ||
+        !Number.isInteger(window.span) || window.span < 3 || window.span > 180 ||
+        !/^[a-f0-9]{64}$/.test(reel.sha256 || '')) continue;
+    await env.DB.prepare("UPDATE jobs SET metadata=json_set(metadata,'$.start',?,'$.source_span',?) WHERE id=? AND run_id=? AND json_extract(metadata,'$.start') IS NULL")
+      .bind(window.start,window.span,reel.id,reel.sha256).run();
+  }
+}
+
 async function wakeLive(env) {
   if (env.LIVE_CHANNEL_ID !== liveChannel || env.GTA_REELS_ENABLED !== 'true') return;
+  await restorePinnedSourceWindows(env);
   const url = new URL(requireValue(env,'LIVE_RENDER_URL'));
   if (url.protocol !== 'https:' || !url.hostname.endsWith('.onrender.com') || url.pathname !== '/') throw new Error('Invalid live host');
   const total = await env.DB.prepare("SELECT count(*) AS count FROM jobs WHERE id LIKE ? AND id NOT LIKE '%test'")
