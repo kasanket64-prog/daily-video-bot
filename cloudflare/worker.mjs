@@ -310,7 +310,7 @@ async function prepareShort(request, env, claims) {
   const { source_id, title, hook, script, analysis, source_facts, sources, credit, category, slot, start, batchDay } = JSON.parse(input);
   const fields = { title, hook, script, source_facts, credit, category };
   const limits = { title: 100, hook: 80, script: 1600, source_facts: 4000, credit: 600, category: 80 };
-  if (typeof source_id !== 'string' || !/^youtube:[A-Za-z0-9_-]{11}$/.test(source_id) ||
+  if (typeof source_id !== 'string' || !/^(?:youtube:[A-Za-z0-9_-]{11}|twitch:[0-9]{9,20})$/.test(source_id) ||
       Object.entries(limits).some(([field, max]) => typeof fields[field] !== 'string' ||
         !fields[field].trim() || fields[field].length > max) ||
       !analysis || ['angle', 'audience', 'story_arc', 'emotion', 'sound_plan', 'cta'].some(field =>
@@ -334,7 +334,7 @@ async function prepareShort(request, env, claims) {
   if (gta && !claims.liveSource && !gtaCatalog(env).some(entry => entry.source_id === source_id && entry.category === category &&
       entry.source_facts === source_facts && entry.credit === credit &&
       (!batch || start + duration <= 7200 || entry.media_kind === 'live-hls'))) return json({ error: 'Source no longer approved for this interval' }, 409);
-  const source = 'https://www.youtube.com/watch?v=' + source_id.slice(8);
+  const source = source_id.startsWith('twitch:') ? 'https://www.twitch.tv/lacy' : 'https://www.youtube.com/watch?v=' + source_id.slice(8);
   const meta = { title: title.slice(0, 100), description: `${script}\nFootage credit: ${credit}\nSource: ${source}\nFact sources: ${sources.join(' ')}`,
     language: /[\u0900-\u097f]/.test(script) ? 'hi' : 'en', hook, script, analysis, source_facts,
     sources: [...sources, source], materials: [], short: true, source_id, category,
@@ -698,7 +698,7 @@ export async function validateLiveToken(request, env) {
   const claims = JSON.parse(new TextDecoder().decode(decode(payload)));
   if (!Number.isFinite(claims.exp) || claims.exp <= Date.now()/1000 || claims.exp > Date.now()/1000+1200 ||
       claims.channel !== liveChannel || claims.channel !== env.LIVE_CHANNEL_ID ||
-      !/^youtube:[\w-]{11}$/.test(claims.liveSource || '') ||
+      !/^(?:youtube:[\w-]{11}|twitch:lacy)$/.test(claims.liveSource || '') ||
       typeof claims.run_id !== 'string' || !/^[a-f0-9-]{36}$/.test(claims.run_id)) throw new Error('Invalid live claims');
   return claims;
 }
@@ -711,20 +711,22 @@ async function liveRoute(request, env, path) {
   if (path === '/live/short-history') return json(await shortHistory(env));
   if (path === '/live/short') {
     const meta = await request.clone().json();
-    if (meta.source_facts !== liveSourceFacts || meta.credit !== liveCredit) return json({error:'Unreviewed context'},403);
-    return prepareShort(request,env,claims);
+    if (meta.source_facts !== liveSourceFacts || meta.credit !== liveCredit || !/^twitch:[0-9]{9,20}$/.test(meta.source_id || '')) return json({error:'Unreviewed context'},403);
+    return prepareShort(request,env,{...claims,liveSource:meta.source_id});
   }
   const match = /^\/live\/(inspect|preview)\/(\d{4}-\d{2}-\d{2}-g\d{2}-short)$/.exec(path);
   if (match) {
     const job = await row(env,match[2]);
-    if (!job || job.run_id !== claims.run_id || JSON.parse(job.metadata).source_id !== claims.liveSource) return json({error:'Wrong live job'},403);
+    if (!job || job.run_id !== claims.run_id || JSON.parse(job.metadata).liveChannel !== env.LIVE_CHANNEL_ID) return json({error:'Wrong live job'},403);
     return match[1] === 'inspect' ? inspectDraft(request,env,claims,match[2]) : acceptPreview(request,env,claims,match[2]);
   }
   if (path === '/live/report') {
     const input = await request.json();
     const count = name => Number.isInteger(input[name]) && input[name]>=0 && input[name]<=40 ? input[name] : 0;
     await env.DB.prepare("INSERT OR REPLACE INTO settings(name,value) VALUES('live:last_result',?)")
-      .bind(JSON.stringify({at:new Date().toISOString(),delivered:count('delivered'),held:count('held'),state:['offline','complete','failed'].includes(input.state)?input.state:'failed'})).run();
+      .bind(JSON.stringify({at:new Date().toISOString(),delivered:count('delivered'),held:count('held'),
+        stage:['lookup','capture','selection','reservation','render','inspection','delivery'].includes(input.stage)?input.stage:'unknown',
+        state:['offline','complete','failed'].includes(input.state)?input.state:'failed'})).run();
     if (input.state === 'failed') {
       const notice = await env.DB.prepare('INSERT OR IGNORE INTO settings(name,value) VALUES(?,?)')
         .bind('live:failure:'+day(),'notified').run();
@@ -742,24 +744,13 @@ async function wakeLive(env) {
   const total = await env.DB.prepare("SELECT count(*) AS count FROM jobs WHERE id LIKE ? AND id NOT LIKE '%test'")
     .bind(day()+'%').first();
   if (total.count >= 40) return;
-  const headers = {'x-goog-api-key':requireValue(env,'YOUTUBE_DATA_API_KEY')};
-  const channel = await api('https://www.googleapis.com/youtube/v3/channels?part=contentDetails&id='+liveChannel,{headers});
-  const playlist = channel.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
-  if (!playlist) return;
-  const recent = await api('https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=10&playlistId='+playlist,{headers});
-  const ids = recent.items.map(i=>i.contentDetails.videoId).join(',');
-  if (!ids) return;
-  const candidates = await api('https://www.googleapis.com/youtube/v3/videos?part=snippet,liveStreamingDetails&id='+ids,{headers});
-  const video = candidates.items.find(v=>v.snippet.channelId === liveChannel && v.snippet.liveBroadcastContent === 'live' &&
-    /GTA\s*(6|VI)\b/i.test(v.snippet.title) && v.liveStreamingDetails?.actualStartTime);
-  if (!video) return;
   const now = Math.floor(Date.now()/1000);
   const lock = await env.DB.prepare("INSERT INTO settings(name,value) VALUES('live:last_wake',?) ON CONFLICT(name) DO UPDATE SET value=excluded.value WHERE CAST(settings.value AS INTEGER) < ?")
     .bind(String(now),now-240).run();
   if (!lock.meta.changes) return;
-  const claims = {liveSource:'youtube:'+video.id,channel:liveChannel,run_id:crypto.randomUUID(),exp:now+1100};
+  const claims = {liveSource:'twitch:lacy',channel:liveChannel,run_id:crypto.randomUUID(),exp:now+1100};
   const payload = {exp:now+180,callback:env.WORKER_URL,token:await liveToken(env,claims),batchDay:day(),source_id:claims.liveSource,
-    source_facts:liveSourceFacts,title:video.snippet.title,channel:liveChannel};
+    source_facts:liveSourceFacts,title:'Lacy GTA VI marathon',channel:liveChannel};
   const body = JSON.stringify(payload);
   const key = await crypto.subtle.importKey('pkcs8',Uint8Array.from(atob(requireValue(env,'LIVE_SIGNING_PRIVATE_KEY')),c=>c.charCodeAt(0)),
     {name:'Ed25519'},false,['sign']);
@@ -789,6 +780,19 @@ async function ownerReview(request, env, action) {
   const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(key.slice(7)))), b=>b.toString(16).padStart(2,'0')).join('');
   if (digest !== reel.keyHash) return json({error:'Denied'},403);
   const claims = {run_id:reel.sha256};
+  if (action === 'live-status' && request.method === 'GET') {
+    const status = {};
+    for (const name of ['live:last_dispatch','live:last_result']) {
+      const saved = await env.DB.prepare('SELECT value FROM settings WHERE name=?').bind(name).first();
+      status[name] = saved ? JSON.parse(saved.value) : null;
+    }
+    return json({enabled:env.LIVE_WATCH_ENABLED === 'true', ...status});
+  }
+  if (action === 'wake' && request.method === 'POST') {
+    if (env.LIVE_WATCH_ENABLED !== 'true') return json({error:'Disabled'},503);
+    await wakeLive(env);
+    return json({checked:true});
+  }
   if (action === 'inspect' && request.method === 'POST') {
     const size = Number(request.headers.get('Content-Length'));
     if (!Number.isInteger(size) || size < 1 || size > 3_000_000) return json({error:'Invalid length'},413);
