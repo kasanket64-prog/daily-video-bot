@@ -832,6 +832,29 @@ async function ownerReview(request, env, action) {
   const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(key.slice(7)))), b=>b.toString(16).padStart(2,'0')).join('');
   if (digest !== reel.keyHash) return json({error:'Denied'},403);
   const claims = {run_id:reel.sha256};
+  if (action === 'connections' && request.method === 'GET') {
+    const status = {
+      telegram:{configured:Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID && env.TELEGRAM_WEBHOOK_SECRET),webhook_matches:false},
+      youtube:{configured:Boolean(env.YOUTUBE_CLIENT_ID && env.YOUTUBE_CLIENT_SECRET && env.YOUTUBE_REFRESH_TOKEN),refreshable:false},
+      instagram:{configured:Boolean(env.INSTAGRAM_ACCESS_TOKEN && env.INSTAGRAM_USER_ID && env.META_API_VERSION)}
+    };
+    try {
+      const info = await telegram(env,'getWebhookInfo',{});
+      status.telegram.webhook_matches = info.url === env.WORKER_URL+'/telegram';
+      status.telegram.pending_updates = info.pending_update_count;
+      status.telegram.delivery_error = Boolean(info.last_error_date);
+    } catch { status.telegram.error = 'Check failed'; }
+    if (status.youtube.configured) {
+      try {
+        const response = await fetch('https://oauth2.googleapis.com/token',{method:'POST',redirect:'manual',signal:AbortSignal.timeout(15000),body:new URLSearchParams({
+          client_id:env.YOUTUBE_CLIENT_ID,client_secret:env.YOUTUBE_CLIENT_SECRET,refresh_token:env.YOUTUBE_REFRESH_TOKEN,grant_type:'refresh_token'})});
+        const token = await response.json();
+        status.youtube.refreshable = response.ok && typeof token.access_token === 'string' && token.access_token.length>0;
+        if (!status.youtube.refreshable) status.youtube.error = ['invalid_grant','invalid_client','unauthorized_client','temporarily_unavailable'].includes(token.error)?token.error:'Check failed';
+      } catch { status.youtube.error = 'Check failed'; }
+    }
+    return json(status);
+  }
   if (action === 'live-status' && request.method === 'GET') {
     const status = {};
     for (const name of ['live:last_dispatch','live:last_result',...liveCreators.map(p=>'live:plan:'+p.user)]) {

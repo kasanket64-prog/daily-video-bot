@@ -90,6 +90,37 @@ test('preview cannot bypass inspection or substitute a different video after ins
   assert.equal(mutations, 0);
 });
 
+test('private connection checks refresh tokens without returning credentials or publishing', async () => {
+  const key='1'.repeat(64);
+  const keyHash=Buffer.from(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(key))).toString('hex');
+  const env={GTA_REELS_ENABLED:'true',WORKER_URL:'https://example.com',TELEGRAM_BOT_TOKEN:'private-bot',
+    TELEGRAM_CHAT_ID:'7',TELEGRAM_WEBHOOK_SECRET:'private-webhook',YOUTUBE_CLIENT_ID:'private-id',
+    YOUTUBE_CLIENT_SECRET:'private-client',YOUTUBE_REFRESH_TOKEN:'private-refresh',
+    OWNER_REVIEW_REEL:{id:'2026-11-21-g39-short',sha256:'2'.repeat(64),keyHash,expires:Date.now()/1000+60}};
+  const request=token=>new Request('https://example.com/owner-review/connections',{headers:{Authorization:'Bearer '+token}});
+  const oldFetch=globalThis.fetch;
+  let calls=0,invalid=false;
+  globalThis.fetch=async url=>{
+    calls++;
+    if(url==='https://api.telegram.org/botprivate-bot/getWebhookInfo') return Response.json({ok:true,result:{url:env.WORKER_URL+'/telegram',pending_update_count:0}});
+    assert.equal(url,'https://oauth2.googleapis.com/token');
+    return invalid?Response.json({error:'invalid_grant',error_description:'private provider detail'},{status:400}):Response.json({access_token:'private-access'});
+  };
+  try {
+    assert.equal((await worker.fetch(request('0'.repeat(64)),env)).status,403);
+    assert.equal(calls,0);
+    const good=await (await worker.fetch(request(key),env)).json();
+    assert.equal(good.telegram.webhook_matches,true);
+    assert.equal(good.youtube.refreshable,true);
+    assert.equal(good.instagram.configured,false);
+    invalid=true;
+    const bad=await (await worker.fetch(request(key),env)).json();
+    assert.deepEqual(bad.youtube,{configured:true,refreshable:false,error:'invalid_grant'});
+    assert.ok(!JSON.stringify([good,bad]).includes('private-'));
+    assert.equal(calls,4);
+  } finally {globalThis.fetch=oldFetch;}
+});
+
 for (const live of [false, true]) test('GTA preview sends once with correct approval mode: ' + live, async () => {
   const id = live ? '2026-11-04-g01-short' : '2026-11-04-short-test';
   const data = new TextEncoder().encode('inspected video');
