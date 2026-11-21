@@ -14,6 +14,7 @@ from tempfile import TemporaryDirectory
 import threading
 import time
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from yt_dlp import YoutubeDL
@@ -45,9 +46,21 @@ def verified(body, signature, now=None):
 def post(job, route, data, content_type="application/json"):
     body = data if isinstance(data, bytes) else json.dumps(data).encode()
     request = Request(ORIGIN + "/live/" + route, data=body, method="POST",
-                      headers={"Authorization": "Bearer " + job["token"], "Content-Type": content_type})
-    with urlopen(request, timeout=180) as response:
-        return json.load(response)
+                      headers={"Authorization": "Bearer " + job["token"], "Content-Type": content_type,
+                               "User-Agent": "daily-video-bot/1.0", "Accept": "application/json"})
+    try:
+        with urlopen(request, timeout=180) as response:
+            return json.load(response)
+    except HTTPError as error:
+        error.gateway = "provider"
+        if "application/json" in error.headers.get("Content-Type", ""):
+            try:
+                label = json.loads(error.read(1000)).get("error")
+                if label in ("Denied", "Live monitoring disabled"):
+                    error.gateway = label
+            except (ValueError, UnicodeDecodeError):
+                pass
+        raise
 
 
 class Quiet:
@@ -188,6 +201,7 @@ def run(job):
         result["error_type"] = type(error).__name__
         if hasattr(error, "code"):
             result["http_status"] = error.code
+            result["gateway"] = getattr(error, "gateway", "upstream")
     finally:
         last_result = result
         try:
