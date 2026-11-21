@@ -1,5 +1,6 @@
 """Render a reviewed highlight from a local media file."""
 import argparse
+import base64
 from array import array
 import json
 import math
@@ -211,3 +212,15 @@ if __name__ == "__main__":
     render_short(args.source, args.output, start, args.duration, args.hook,
                  narration=args.narration, script=args.script,
                  ffmpeg=args.ffmpeg)
+
+
+def live_evidence(path, start, duration, *, width, ffmpeg="ffmpeg"):
+    def encoded(args):
+        data = subprocess.check_output([ffmpeg, "-v", "error", "-threads", "1", "-filter_threads", "1", "-protocol_whitelist", "file", *args],
+                                       timeout=30, stderr=subprocess.PIPE)
+        return base64.b64encode(data).decode()
+    frames = [encoded(["-ss", str(start + duration * t), "-i", str(path), "-frames:v", "1", "-vf",
+                       f"scale={width}:-2", "-c:v", "mjpeg", "-q:v", "4", "-threads", "1",
+                       "-f", "image2pipe", "-"]) for t in (.04, .18, .35, .52, .72, .92)]
+    audio = encoded(["-ss",str(start),"-i", str(path),"-t",str(duration),"-vn", "-ac", "1", "-ar", "16000", "-b:a", "24k", "-f", "mp3", "-"])
+    return frames, audio

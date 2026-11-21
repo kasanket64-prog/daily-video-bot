@@ -18,6 +18,7 @@ from urllib.error import HTTPError
 
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from yt_dlp import YoutubeDL
+from short_render import live_evidence
 
 ROOT = Path(__file__).resolve().parent
 ORIGIN = "https://daily-video-approvals.kasanket64.workers.dev"
@@ -27,6 +28,7 @@ last_result = None
 spec = importlib.util.spec_from_file_location("neon_highlights", ROOT / "third-party/neonclipping/highlights.py")
 neon = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(neon)
+neon.cv2.setNumThreads(1)
 public_key = load_pem_public_key((ROOT / "live-public.pem").read_bytes())
 
 
@@ -109,18 +111,6 @@ def render(source, moment, folder, policy, plan):
     return output
 
 
-def evidence(path, start, duration, *, width):
-    def encoded(args):
-        data = subprocess.check_output(["ffmpeg", "-v", "error", "-threads", "2", *args],
-                                       timeout=30, stderr=subprocess.DEVNULL)
-        return base64.b64encode(data).decode()
-    frames = [encoded(["-ss", str(start + duration * t), "-i", str(path), "-frames:v", "1", "-vf",
-                       f"scale={width}:-2", "-c:v", "mjpeg", "-q:v", "4", "-threads", "1",
-                       "-f", "image2pipe", "-"]) for t in (.04, .18, .35, .52, .72, .92)]
-    audio = encoded(["-ss",str(start),"-i", str(path),"-t",str(duration),"-vn", "-ac", "1", "-ar", "16000", "-b:a", "24k", "-f", "mp3", "-"])
-    return frames, audio
-
-
 def inspection(path, duration):
     details = probe(path)
     visual = next(s for s in details["streams"] if s["codec_type"] == "video")
@@ -129,7 +119,7 @@ def inspection(path, duration):
     raw = path.read_bytes()
     if not 0 < len(raw) < 19_000_000:
         raise ValueError("Invalid export size")
-    frames,audio=evidence(path,0,duration,width=360)
+    frames,audio=live_evidence(path,0,duration,width=360)
     return raw, {"duration": duration, "sha256": hashlib.sha256(raw).hexdigest(), "frames": frames, "audio": audio}
 
 
@@ -192,7 +182,9 @@ def run(job):
                         continue
                     if not slots:
                         break
-                    frames,_ = evidence(source,start,24,width=640)
+                    result["stage"] = "plan_frames"
+                    frames,_ = live_evidence(source,start,24,width=640)
+                    result["stage"] = "plan"
                     plan = post(job,"plan",{"creator":user,"frames":frames})
                     if plan.get("usable") is not True:
                         result["screened"] = result.get("screened",0) + 1
@@ -231,6 +223,10 @@ def run(job):
         if hasattr(error, "code"):
             result["http_status"] = error.code
             result["gateway"] = getattr(error, "gateway", "upstream")
+        if isinstance(error, subprocess.CalledProcessError):
+            result["returncode"] = error.returncode
+            if error.stderr and not any("https://" in str(arg) for arg in error.cmd):
+                result["media_error"] = error.stderr.decode(errors="replace")[-400:]
     finally:
         last_result = result
         try:

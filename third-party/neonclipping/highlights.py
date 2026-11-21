@@ -16,8 +16,8 @@ import numpy as np, cv2
 FPS = 3; W, H = 160, 90; CUT = 38.0   # mean abs diff above this = hard cut
 
 def _chunk(source, start, length, report):
-    cmd = ['ffmpeg', '-v', 'error', '-ss', f'{start}', '-t', f'{length}', '-i', str(source), '-an',
-           '-vf', f'fps={FPS},scale={W}:{H}', '-pix_fmt', 'gray', '-f', 'rawvideo', 'pipe:1']
+    cmd = ['ffmpeg', '-v', 'error', '-threads', '1', '-filter_threads', '1', '-ss', f'{start}', '-t', f'{length}', '-i', str(source), '-an',
+           '-vf', f'fps={FPS},scale={W}:{H}', '-pix_fmt', 'gray', '-threads', '1', '-f', 'rawvideo', 'pipe:1']
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=W * H * 64)
     flow, cuts, prev, n = [], [], None, 0
     try:
@@ -60,7 +60,7 @@ def _motion(source, duration, report):
     return f, c
 
 def _audio(source):
-    cmd = ['ffmpeg', '-v', 'error', '-i', str(source), '-vn', '-ac', '1', '-ar', '8000', '-f', 's16le', 'pipe:1']
+    cmd = ['ffmpeg', '-v', 'error', '-threads', '1', '-filter_threads', '1', '-i', str(source), '-vn', '-ac', '1', '-ar', '8000', '-f', 's16le', 'pipe:1']
     raw = subprocess.run(cmd, capture_output=True).stdout
     x = np.frombuffer(raw[:len(raw) // 2 * 2], np.int16).astype(np.float32) / 32768
     n = len(x) // 8000
