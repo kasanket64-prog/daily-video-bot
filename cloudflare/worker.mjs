@@ -739,6 +739,9 @@ async function liveRoute(request, env, path) {
         ...input.frames.map(data=>({inlineData:{mimeType:'image/jpeg',data}}))]}],generationConfig:{responseMimeType:'application/json',temperature:0}})
     });
     const plan = JSON.parse(result.candidates?.[0]?.content?.parts?.map(p=>p.text || '').join('') || '{}');
+    await env.DB.prepare("INSERT OR REPLACE INTO settings(name,value) VALUES('live:last_plan',?)")
+      .bind(JSON.stringify({at:new Date().toISOString(),creator:policy.user,usable:validLivePlan(plan),
+        reason:typeof plan.reason === 'string'?plan.reason.slice(0,500):'Invalid editorial plan'})).run();
     if (plan.usable !== true) return json({usable:false,reason:typeof plan.reason === 'string'?plan.reason.slice(0,300):'No self-contained gameplay event'});
     if (!validLivePlan(plan)) return json({usable:false,reason:'Invalid editorial plan'});
     return json(plan);
@@ -829,7 +832,7 @@ async function ownerReview(request, env, action) {
   const claims = {run_id:reel.sha256};
   if (action === 'live-status' && request.method === 'GET') {
     const status = {};
-    for (const name of ['live:last_dispatch','live:last_result']) {
+    for (const name of ['live:last_dispatch','live:last_result','live:last_plan']) {
       const saved = await env.DB.prepare('SELECT value FROM settings WHERE name=?').bind(name).first();
       status[name] = saved ? JSON.parse(saved.value) : null;
     }
