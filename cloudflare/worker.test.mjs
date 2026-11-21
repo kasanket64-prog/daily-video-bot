@@ -57,13 +57,6 @@ test('a reviewed Clix live clip keeps Clix source attribution and rejects other 
   assert.ok(!stored.sources.includes('https://www.twitch.tv/lacy'));
   assert.match(stored.description,/#Clix/);
   assert.equal((await worker.fetch(request({...meta,creator:'unreviewed'}),env)).status,403);
-  assert.equal((await worker.fetch(request({...meta,capture_mode:'unknown'}),env)).status,400);
-  assert.equal((await worker.fetch(request({...meta,capture_mode:'replay'}),env)).status,403);
-  const replay={...meta,creator:'kreekcraft',capture_mode:'replay',credit:'Ad | KreekCraft',
-    source_facts:"KreekCraft's GTA VI livestream. Require genuine GTA VI gameplay and the creator's visible reaction. Preserve the source stream overlay and credit the livestream. Exclude major story spoilers and commercial breaks."};
-  assert.equal((await worker.fetch(request(replay),env)).status,200);
-  assert.equal(JSON.parse(saved[2]).capture_mode,'replay');
-  assert.match(JSON.parse(saved[2]).description,/broadcast replay/);
 });
 
 test('owner review binds the upload key and inspection to one file and expires', async () => {
@@ -133,7 +126,7 @@ for (const live of [false, true]) test('GTA preview sends once with correct appr
   const data = new TextEncoder().encode('inspected video');
   const sha256 = Buffer.from(await crypto.subtle.digest('SHA-256', data)).toString('hex');
   const job = { run_id: '1', status: 'generating', expires: Date.now() / 1000 + 1000,
-    metadata: JSON.stringify({ gta: true, title: "GTA VI", capture_mode:live?'replay':undefined, inspection: { passed: true, sha256 } }) };
+    metadata: JSON.stringify({ gta: true, title: "GTA VI", inspection: { passed: true, sha256 } }) };
   const DB = { prepare(sql) { return { bind(...values) { return {
     async first() { return job; },
     async run() {
@@ -147,7 +140,6 @@ for (const live of [false, true]) test('GTA preview sends once with correct appr
   globalThis.fetch = async (url, { body }) => {
     assert.equal(url, 'https://api.telegram.org/botprivate/sendVideo');
     assert.equal(body.get('chat_id'), '7');
-    if(live) assert.match(body.get('caption'),/Recent broadcast highlight/);
     assert.equal(body.has('reply_markup'), live);
     if (live) assert.equal(JSON.parse(body.get('reply_markup')).inline_keyboard[0][0].callback_data, 'approve:' + id);
     assert.equal(body.has('disable_notification'), false);

@@ -10,8 +10,6 @@ Cloudflare keeps `LIVE_WATCH_ENABLED=true`, `LIVE_RENDER_URL`, and `LIVE_CHANNEL
 
 The free host provides 0.1 CPU and 512 MB RAM. Processing can take several minutes, and capture windows leave gaps between checks. Render may restart or suspend free services under its published usage limits. A restart discards temporary video and the next cron retries. A daily failure notice goes to Telegram when the scheduler or clipper reports an error. Free hosting has no continuous-coverage guarantee and cannot guarantee 30–40 worthwhile clips every day.
 
-If the live edge produces no passing cut, the KreekCraft policy also permits replay footage. The service can sample up to two earlier 90-second windows from the same current broadcast. It verifies the creator and broadcast start time before sampling, retains the original broadcast ID and absolute source interval for duplicate checks, and labels replay previews as recent broadcast highlights. All audio and final-file inspection gates still apply. It never relabels a replay as footage from the live edge.
-
 To pause capture, set the Worker's `LIVE_WATCH_ENABLED=false`. Pausing also holds pending live uploads. YouTube remains private until its visibility setting is changed. Instagram requires its own connected account before that destination can finish.
 
 The historical GitHub runner instructions below describe the development and pilot path. The recurring live video service uses Render.

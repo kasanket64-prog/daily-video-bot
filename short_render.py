@@ -1,7 +1,6 @@
 """Render a reviewed highlight from a local media file."""
 import argparse
 import base64
-import hashlib
 from array import array
 import json
 import math
@@ -225,17 +224,6 @@ def live_evidence(path, start, duration, *, width, ffmpeg="ffmpeg"):
                        "-f", "image2pipe", "-"]) for t in (.04, .18, .35, .52, .72, .92)]
     audio = encoded(["-ss",str(start),"-i", str(path),"-t",str(duration),"-vn", "-ac", "1", "-ar", "16000", "-b:a", "24k", "-f", "mp3", "-"])
     return frames, audio
-
-
-def replay_start(live, replay, seed):
-    if (not re.fullmatch(r"v[0-9]+",str(replay.get("id",""))) or
-            replay.get("uploader_id") != live.get("uploader_id") or
-            not live.get("uploader_id") or
-            any(type(x) not in (int,float) or not math.isfinite(x) or x<=0
-                for x in (live.get("timestamp"),replay.get("timestamp"),replay.get("duration"))) or
-            abs(replay["timestamp"]-live["timestamp"])>5 or replay["duration"]<391):
-        raise ValueError("Replay must match the current broadcast")
-    return int.from_bytes(hashlib.sha256(seed.encode()).digest()[:8],"big") % (int(replay["duration"])-390)
 
 
 def render_live(source, moment, folder, policy, plan, *, ffmpeg="ffmpeg", ffprobe="ffprobe"):

@@ -18,7 +18,7 @@ from urllib.error import HTTPError
 
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from yt_dlp import YoutubeDL
-from short_render import live_evidence, render_live, replay_start
+from short_render import live_evidence, render_live
 
 ROOT = Path(__file__).resolve().parent
 ORIGIN = "https://daily-video-approvals.kasanket64.workers.dev"
@@ -126,85 +126,69 @@ def run(job):
             job["source_id"] = "twitch:" + str(stream["id"])
             used = [(x["start"], x["start"] + x.get("duration", 24)) for x in history
                     if x.get("source_id") == job["source_id"] and x.get("start") is not None]
-            for mode in (("live","replay1","replay2") if user=="kreekcraft" else ("live",)):
-                capture,seek,absolute=stream,[],math.floor(time.time())-30
-                if mode!="live":
-                    result["stage"]="lookup"
-                    try:
-                        with YoutubeDL({"quiet":True,"logger":Quiet(),"socket_timeout":10,
-                                        "retries":0,"extractor_retries":0,"live_from_start":True}) as client:
-                            capture=client.extract_info("https://www.twitch.tv/"+user,download=False)
-                        offset=replay_start(stream,capture,job["token"]+mode)
-                        seek=["-ss",str(offset)]
-                        absolute=int(capture["timestamp"])+offset
-                    except Exception:
-                        continue
-                formats = [f for f in capture["formats"] if 360 <= (f.get("height") or 0) <= 720]
-                if not formats:
+            formats = [f for f in stream["formats"] if 360 <= (f.get("height") or 0) <= 720]
+            if not formats:
+                continue
+            selected = min(formats, key=lambda f: abs(f["height"] - 480))
+            with TemporaryDirectory() as tmp:
+                folder = Path(tmp)
+                source = folder / "live.mkv"
+                absolute = math.floor(time.time()) - 30
+                result["stage"] = "capture"
+                try:
+                    ffmpeg(["-rw_timeout", "15000000", "-protocol_whitelist", "https,tls,tcp,crypto",
+                            "-i", selected["url"], "-t", "90", "-fs", "64000000", "-map", "0:v:0",
+                            "-map", "0:a:0", "-c", "copy", str(source)], folder)
+                except subprocess.SubprocessError:
                     continue
-                selected = min(formats, key=lambda f: abs(f["height"] - 480))
-                with TemporaryDirectory() as tmp:
-                    folder = Path(tmp)
-                    source = folder / "live.mkv"
-                    result["stage"] = "capture"
-                    try:
-                        ffmpeg(["-rw_timeout", "15000000", "-protocol_whitelist", "https,tls,tcp,crypto",
-                                *seek, "-i", selected["url"], "-t", "90", "-fs", "64000000", "-map", "0:v:0",
-                                "-map", "0:a:0", "-c", "copy", str(source)], folder)
-                    except subprocess.SubprocessError:
+                duration = float(probe(source)["format"]["duration"])
+                if duration < 24:
+                    continue
+                result["stage"] = "selection"
+                moments = neon.rank(source, duration, count=2, length=24)
+                for candidate in moments:
+                    start = int(candidate["start"])
+                    stop = start + 24
+                    if (stop > duration or (candidate.get("features", {}).get("motion") or 0) < .015
+                            or any(absolute + start < b and a < absolute + stop for a, b in used)):
                         continue
-                    duration = float(probe(source)["format"]["duration"])
-                    if duration < 24:
-                        continue
-                    result["stage"] = "selection"
-                    moments = neon.rank(source, duration, count=2, length=24)
-                    for candidate in moments:
-                        start = int(candidate["start"])
-                        stop = start + 24
-                        if (stop > duration or (candidate.get("features", {}).get("motion") or 0) < .015
-                                or any(absolute + start < b and a < absolute + stop for a, b in used)):
-                            continue
-                        if not slots:
-                            break
-                        result["stage"] = "plan_frames"
-                        frames,_ = live_evidence(source,start,24,width=640)
-                        result["stage"] = "plan"
-                        plan = post(job,"plan",{"creator":user,"frames":frames})
-                        if plan.get("usable") is not True:
-                            result["screened"] = result.get("screened",0) + 1
-                            continue
-                        slot = slots.pop(0)
-                        metadata = dict(source_id=job["source_id"], creator=user, slot=slot, start=absolute+start,
-                            capture_mode="live" if mode=="live" else "replay",
-                            duration=24, batchDay=job["batchDay"], category="GTA 6 gameplay",
-                            credit=policy["credit"], source_facts=policy["facts"],
-                            sources=[policy["campaign"], "https://www.twitch.tv/" + user] +
-                                (["https://www.twitch.tv/videos/"+capture["id"][1:]] if mode!="live" else []),
-                            title=plan["title"], hook=plan["hook"],
-                            script="Editorial summary of the source highlight. " + plan["payoff"], clipLanguage="en",
-                            analysis=dict(angle=plan["payoff"][:240], audience="GTA VI viewers",
-                            story_arc=plan["payoff"][:240], emotion="Surprise",
-                            sound_plan="Original synchronized stream commentary and gameplay audio", cta="Watch the outcome"))
-                        result["stage"] = "reservation"
-                        reservation = post(job,"short",metadata)
-                        if reservation.get("skip"):
-                            continue
-                        result["stage"] = "render"
-                        output = render_live(source,(start,stop),folder,policy,plan)
-                        raw,review = inspection(output,24)
-                        result["stage"] = "inspection"
-                        approved = post(job,"inspect/"+reservation["id"],review)
-                        used.append((absolute+start,absolute+stop))
-                        if approved.get("passed") is True:
-                            result["stage"] = "delivery"
-                            post(job,"preview/"+reservation["id"],raw,"video/mp4")
-                            result["delivered"] += 1
-                        else:
-                            result["held"] += 1
-                    if result["delivered"] or not slots:
+                    if not slots:
                         break
-            if result["delivered"] or not slots:
-                break
+                    result["stage"] = "plan_frames"
+                    frames,_ = live_evidence(source,start,24,width=640)
+                    result["stage"] = "plan"
+                    plan = post(job,"plan",{"creator":user,"frames":frames})
+                    if plan.get("usable") is not True:
+                        result["screened"] = result.get("screened",0) + 1
+                        continue
+                    slot = slots.pop(0)
+                    metadata = dict(source_id=job["source_id"], creator=user, slot=slot, start=absolute+start,
+                        duration=24, batchDay=job["batchDay"], category="GTA 6 gameplay",
+                        credit=policy["credit"], source_facts=policy["facts"],
+                        sources=[policy["campaign"], "https://www.twitch.tv/" + user],
+                        title=plan["title"], hook=plan["hook"],
+                        script="Editorial summary of the source highlight. " + plan["payoff"], clipLanguage="en",
+                        analysis=dict(angle=plan["payoff"][:240], audience="GTA VI viewers",
+                        story_arc=plan["payoff"][:240], emotion="Surprise",
+                        sound_plan="Original synchronized stream commentary and gameplay audio", cta="Watch the outcome"))
+                    result["stage"] = "reservation"
+                    reservation = post(job,"short",metadata)
+                    if reservation.get("skip"):
+                        continue
+                    result["stage"] = "render"
+                    output = render_live(source,(start,stop),folder,policy,plan)
+                    raw,review = inspection(output,24)
+                    result["stage"] = "inspection"
+                    approved = post(job,"inspect/"+reservation["id"],review)
+                    used.append((absolute+start,absolute+stop))
+                    if approved.get("passed") is True:
+                        result["stage"] = "delivery"
+                        post(job,"preview/"+reservation["id"],raw,"video/mp4")
+                        result["delivered"] += 1
+                    else:
+                        result["held"] += 1
+                if result["delivered"] or not slots:
+                    break
     except Exception as error:
         result["state"] = "failed"
         result["error_type"] = type(error).__name__
