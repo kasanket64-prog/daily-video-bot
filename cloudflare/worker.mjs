@@ -307,7 +307,7 @@ export function inspectionPassed(result, meta = {}) {
 async function prepareShort(request, env, claims) {
   const input = await request.text();
   if (input.length > 12000) return json({ error: 'Short metadata too large' }, 413);
-  const { source_id, title, hook, script, analysis, source_facts, sources, credit, category, slot, start, batchDay } = JSON.parse(input);
+  const { source_id, title, hook, script, analysis, source_facts, sources, credit, category, slot, start, batchDay, capture_mode } = JSON.parse(input);
   const fields = { title, hook, script, source_facts, credit, category };
   const limits = { title: 100, hook: 80, script: 1600, source_facts: 4000, credit: 600, category: 80 };
   if (typeof source_id !== 'string' || !/^(?:youtube:[A-Za-z0-9_-]{11}|twitch:[0-9]{9,20})$/.test(source_id) ||
@@ -330,6 +330,8 @@ async function prepareShort(request, env, claims) {
   const test = env.SHORT_PREVIEW_TEST === 'true' && !claims.liveSource;
   const id = day() + (batch && !test ? '-g' + String(slot).padStart(2, '0') : '') + (test ? '-short-test' : '-short');
   const gta = env.GTA_REELS_ENABLED === 'true';
+  if (capture_mode !== undefined && !['live','replay'].includes(capture_mode)) return json({error:'Invalid capture mode'},400);
+  if (capture_mode === 'replay' && claims.liveCreator?.user !== 'kreekcraft') return json({error:'Unreviewed replay source'},403);
   if (claims.liveSource && (!batch || source_id !== claims.liveSource || credit !== (claims.liveCreator?.credit || liveCredit) || category !== 'GTA 6 gameplay')) return json({error:'Unreviewed broadcast'},403);
   if (gta && !claims.liveSource && !gtaCatalog(env).some(entry => entry.source_id === source_id && entry.category === category &&
       entry.source_facts === source_facts && entry.credit === credit &&
@@ -343,8 +345,9 @@ async function prepareShort(request, env, claims) {
     if (claims.liveSource) {
       meta.liveChannel = env.LIVE_CHANNEL_ID;
       meta.creator = claims.liveCreator?.user || 'lacy';
+      meta.capture_mode = capture_mode || 'live';
       const policy = liveCreators.find(creator => creator.user === meta.creator);
-      meta.description = policy.credit + '\n' + meta.title + '\nWatch '+policy.name+' live: https://www.twitch.tv/'+policy.user;
+      meta.description = policy.credit + '\n' + meta.title + '\nWatch '+policy.name+' live: https://www.twitch.tv/'+policy.user + (meta.capture_mode === 'replay'?'\nHighlight from the same broadcast replay.':'');
     }
     Object.assign(meta, { start, duration, slot });
     const language = JSON.parse(input).clipLanguage;
@@ -506,7 +509,7 @@ export async function acceptPreview(request, env, claims, id) {
   ]] }));
   if (!immediate && !testPreview) form.set('disable_notification', 'true');
   form.set('caption', testPreview ? 'Shorts delivery test. This preview cannot be published.' :
-    immediate ? meta.title + '\nInspection passed. Approve this file for YouTube and Instagram.' :
+    immediate ? meta.title + (meta.capture_mode === 'replay'?'\nRecent broadcast highlight.':'') + '\nInspection passed. Approve this file for YouTube and Instagram.' :
     `${meta.title}\nPreparing your ${meta.cartoon ? meta.short ? 'cartoon Short' : 'cartoon episode' : 'video'} for review. Approval buttons arrive around 9 AM India time.`);
   form.set('video', new Blob([data], { type: 'video/mp4' }), 'preview.mp4');
   const sent = await telegram(env, 'sendVideo', form);
