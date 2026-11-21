@@ -521,13 +521,13 @@ export function uploadsComplete(job, env) {
     (!destinations.includes('instagram') || job.instagram_state === 'uploaded');
 }
 
-async function webhook(request, env, onlyId) {
+async function webhook(request, env, allowedIds) {
   if (!env.TELEGRAM_WEBHOOK_SECRET || request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== env.TELEGRAM_WEBHOOK_SECRET) return json({ error: 'Denied' }, 403);
   const callback = (await request.json()).callback_query;
   if (!callback) return json({ ok: true });
   const match = /^(approve|reject):(\d{4}-\d{2}-\d{2}(?:(?:-g\d{2})?-short|-cartoon-(?:episode|short))?)$/.exec(callback.data || '');
   let accepted = false;
-  if (match && (!onlyId || match[2] === onlyId) && allowedApproval(callback, await row(env, match[2]), env)) {
+  if (match && (!allowedIds || allowedIds.includes(match[2])) && allowedApproval(callback, await row(env, match[2]), env)) {
     const result = await env.DB.prepare("UPDATE jobs SET status=? WHERE id=? AND status='pending' AND expires>?")
       .bind(match[1] === 'approve' ? 'approved' : 'rejected', match[2], Math.floor(Date.now() / 1000)).run();
     accepted = Boolean(result.meta.changes);
@@ -598,17 +598,18 @@ async function tick(env) {
   const gta = env.GTA_REELS_ENABLED === 'true';
   const cartoonsEnabled = !gta && env.CARTOON_AUTOMATION_ENABLED === 'true';
   const preview = env.SHORT_PREVIEW_TEST === 'true';
-  const manual = gta ? env.OWNER_REVIEW_REEL : null;
-  if ((preview && !manual) || (!gta && env.AUTOMATION_ENABLED !== 'true' && !cartoonsEnabled) || !env.DB || !env.TELEGRAM_BOT_TOKEN || !env.WORKER_URL || !env.TELEGRAM_WEBHOOK_SECRET) return;
+  const reviews = gta ? ownerReviews(env) : [];
+  if ((preview && !reviews.length) || (!gta && env.AUTOMATION_ENABLED !== 'true' && !cartoonsEnabled) || !env.DB || !env.TELEGRAM_BOT_TOKEN || !env.WORKER_URL || !env.TELEGRAM_WEBHOOK_SECRET) return;
   const info = await telegram(env, 'getWebhookInfo', {});
   if (info.url !== env.WORKER_URL + '/telegram') await telegram(env, 'setWebhook', {
     url: env.WORKER_URL + '/telegram', secret_token: env.TELEGRAM_WEBHOOK_SECRET, allowed_updates: ['callback_query'] });
-  const jobs = preview ? [await row(env, manual.id)].filter(j => j && ['pending','approved'].includes(j.status)) : (await env.DB.prepare("SELECT * FROM jobs WHERE status IN ('ready','pending','approved') AND coalesce(json_extract(metadata,'$.gta'),0)=? AND ((coalesce(json_extract(metadata,'$.cartoon'),0)=1 AND ?=1) OR (coalesce(json_extract(metadata,'$.cartoon'),0)=0 AND ?=1)) AND (status != 'pending' OR expires <= unixepoch()) ORDER BY CASE WHEN expires <= unixepoch() THEN 0 WHEN status='ready' THEN 1 ELSE 2 END, ((rowid + unixepoch()/300) % 101), id LIMIT 5")
+  const jobs = preview ? (await Promise.all(reviews.map(reel => row(env, reel.id)))).filter(j => j && ['pending','approved'].includes(j.status)) : (await env.DB.prepare("SELECT * FROM jobs WHERE status IN ('ready','pending','approved') AND coalesce(json_extract(metadata,'$.gta'),0)=? AND ((coalesce(json_extract(metadata,'$.cartoon'),0)=1 AND ?=1) OR (coalesce(json_extract(metadata,'$.cartoon'),0)=0 AND ?=1)) AND (status != 'pending' OR expires <= unixepoch()) ORDER BY CASE WHEN expires <= unixepoch() THEN 0 WHEN status='ready' THEN 1 ELSE 2 END, ((rowid + unixepoch()/300) % 101), id LIMIT 5")
     .bind(Number(gta), Number(cartoonsEnabled), Number(gta || env.AUTOMATION_ENABLED === 'true')).all()).results;
   for (const job of jobs) {
     try {
       const meta = JSON.parse(job.metadata);
-      const pinned = manual && job.id === manual.id && job.run_id === manual.sha256 && meta.inspection?.passed && meta.inspection.sha256 === manual.sha256;
+      const manual = reviews.find(reel => reel.id === job.id);
+      const pinned = manual && job.run_id === manual.sha256 && meta.inspection?.passed && meta.inspection.sha256 === manual.sha256;
       if (preview ? !pinned : gta && !pinned && !gtaCatalog(env).some(entry => entry.source_id === meta.source_id)) continue;
       if (job.expires <= Date.now() / 1000) {
         const done = await env.DB.prepare("UPDATE jobs SET status='expired' WHERE id=? AND status IN ('ready','pending','approved')").bind(job.id).run();
@@ -652,10 +653,17 @@ async function tick(env) {
   }
 }
 
-// A deployer can pin one finished file for review while the daily publisher is off.
+function ownerReviews(env) {
+  const configured = env.OWNER_REVIEW_REEL;
+  return Array.isArray(configured) ? configured : configured ? [configured] : [];
+}
+
+// Each pinned file has an independent upload key and approval decision.
 // The short-lived upload key cannot choose metadata, the destination, or another file.
 async function ownerReview(request, env, action) {
-  const reel = env.OWNER_REVIEW_REEL;
+  const reviews = ownerReviews(env);
+  const id = new URL(request.url).searchParams.get('id');
+  const reel = id ? reviews.find(item => item.id === id) : reviews[0];
   if (!reel || env.GTA_REELS_ENABLED !== 'true' || !/^\d{4}-\d{2}-\d{2}-g\d{2}-short$/.test(reel.id) ||
       !/^[a-f0-9]{64}$/.test(reel.sha256) || !(Date.now()/1000 < reel.expires)) return json({error:'Unavailable'},404);
   const key = request.headers.get('Authorization') || '';
@@ -697,7 +705,7 @@ export default {
     try {
       if (cartoonRoute && !cartoonsEnabled) return json({ error: 'Cartoon automation is disabled' }, 503);
       if (url.pathname.startsWith('/owner-review/')) return await ownerReview(request, env, url.pathname.slice('/owner-review/'.length));
-      if ((enabled || cartoonsEnabled || (gta && (!previewTest || env.OWNER_REVIEW_REEL))) && url.pathname === '/telegram' && request.method === 'POST') return await webhook(request, env, previewTest ? env.OWNER_REVIEW_REEL.id : undefined);
+      if ((enabled || cartoonsEnabled || (gta && (!previewTest || env.OWNER_REVIEW_REEL))) && url.pathname === '/telegram' && request.method === 'POST') return await webhook(request, env, previewTest ? ownerReviews(env).map(reel => reel.id) : undefined);
       if (!gta && !enabled && !previewTest && !cartoonRoute) return json({ error: 'Automation is disabled' }, 503);
       if (request.method !== 'POST' || !(cartoonRoute || /^\/render\/(job|short|short-script|short-inputs|short-history|(preview|inspect)\/\d{4}-\d{2}-\d{2}(?:(?:-g\d{2})?-short(?:-test)?)?)$/.test(url.pathname))) return json({ error: 'Not found' }, 404);
       let claims;
