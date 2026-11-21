@@ -2,6 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker, { validateClaims, authenticate, validateMetadata, allowedApproval, parseTrends, prepareJob, uploadsComplete, fitnessTrends, selectFitnessClip, inspectionPassed, acceptPreview } from './worker.mjs';
 import {liveToken,validateLiveToken,restorePinnedSourceWindows} from './worker.mjs';
+import {validLivePlan} from './worker.mjs';
+
+test('live editorial plans require bounded factual text and a visible facecam crop', () => {
+  const good={usable:true,title:'The red car gets away',hook:'Watch the red car',payoff:'The car escapes',facecam:{x:0,y:0,w:.25,h:.4}};
+  assert.equal(Boolean(validLivePlan(good)),true);
+  for(const change of [{usable:false},{hook:'a'.repeat(33)},{payoff:''},{facecam:{x:.9,y:0,w:.25,h:.4}},{facecam:{x:0,y:0,w:0,h:1}},{title:'two\nlines'}]){
+    assert.equal(Boolean(validLivePlan({...good,...change})),false);
+  }
+});
 
 test('live capability expires and cannot authorize another creator or a modified payload', async () => {
   const env={LIVE_CALLBACK_SECRET:'test'.repeat(16),LIVE_CHANNEL_ID:'UCeoZXkaJDtdTHafgoZeDcAA'};
