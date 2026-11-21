@@ -38,6 +38,27 @@ test('inspector requires every explicit check and never treats missing or string
   assert.equal(inspectionPassed(null), false);
 });
 
+test('a reviewed Clix live clip keeps Clix source attribution and rejects other creators', async () => {
+  let saved;
+  const env={LIVE_CALLBACK_SECRET:'test'.repeat(16),LIVE_CHANNEL_ID:'UCeoZXkaJDtdTHafgoZeDcAA',
+    GTA_REELS_ENABLED:'true',LIVE_WATCH_ENABLED:'true',SHORT_PREVIEW_TEST:'true',
+    DB:{prepare(){return {bind(...values){saved=values;return {async run(){return {meta:{changes:1}};}};}};}}};
+  const token=await liveToken(env,{channel:env.LIVE_CHANNEL_ID,liveSource:'twitch:reviewed',run_id:crypto.randomUUID(),exp:Math.floor(Date.now()/1000)+60});
+  const meta={source_id:'twitch:321495894240',creator:'clix',title:'Clix escapes the chase',hook:'Watch the escape',
+    script:'Clix escapes the chase.',source_facts:"Clix's GTA VI marathon beginning November 18, 2026. Require genuine gameplay and Clix as the primary visible subject. Credit Clix with #Clix. No AI-generated footage, added logos, major story spoilers or negative false framing.",
+    sources:['https://reachclipping.com/ClixGTA'],credit:'Ad | #Clix | twitch.tv/clix',category:'GTA 6 gameplay',
+    slot:1,start:1795250000,duration:24,batchDay:new Date(Date.now()+19800000).toISOString().slice(0,10),
+    analysis:Object.fromEntries(['angle','audience','story_arc','emotion','sound_plan','cta'].map(k=>[k,'Reviewed gameplay']))};
+  const request=body=>new Request('https://example.com/live/short',{method:'POST',headers:{Authorization:'Bearer '+token},body:JSON.stringify(body)});
+  assert.equal((await worker.fetch(request(meta),env)).status,200);
+  const stored=JSON.parse(saved[2]);
+  assert.equal(stored.creator,'clix');
+  assert.ok(stored.sources.includes('https://www.twitch.tv/clix'));
+  assert.ok(!stored.sources.includes('https://www.twitch.tv/lacy'));
+  assert.match(stored.description,/#Clix/);
+  assert.equal((await worker.fetch(request({...meta,creator:'unreviewed'}),env)).status,403);
+});
+
 test('owner review binds the upload key and inspection to one file and expires', async () => {
   const key = '1'.repeat(64);
   const keyHash = Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key))).toString('hex');

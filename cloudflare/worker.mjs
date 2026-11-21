@@ -334,7 +334,7 @@ async function prepareShort(request, env, claims) {
   if (gta && !claims.liveSource && !gtaCatalog(env).some(entry => entry.source_id === source_id && entry.category === category &&
       entry.source_facts === source_facts && entry.credit === credit &&
       (!batch || start + duration <= 7200 || entry.media_kind === 'live-hls'))) return json({ error: 'Source no longer approved for this interval' }, 409);
-  const source = source_id.startsWith('twitch:') ? 'https://www.twitch.tv/lacy' : 'https://www.youtube.com/watch?v=' + source_id.slice(8);
+  const source = source_id.startsWith('twitch:') ? 'https://www.twitch.tv/'+(claims.liveCreator?.user || 'lacy') : 'https://www.youtube.com/watch?v=' + source_id.slice(8);
   const meta = { title: title.slice(0, 100), description: `${script}\nFootage credit: ${credit}\nSource: ${source}\nFact sources: ${sources.join(' ')}`,
     language: /[\u0900-\u097f]/.test(script) ? 'hi' : 'en', hook, script, analysis, source_facts,
     sources: [...sources, source], materials: [], short: true, source_id, category,
@@ -676,6 +676,8 @@ const liveChannel = 'UCeoZXkaJDtdTHafgoZeDcAA';
 const liveCredit = 'Ad | #LACY | twitch.tv/lacy';
 const liveSourceFacts = "Lacy's GTA VI marathon. Require actual GTA VI gameplay and Lacy as the primary visible subject throughout. No story spoilers, sponsor logos or negative framing. Muted editorial cuts with accurate text are allowed.";
 const liveCreators = [
+  {user:'clix',name:'Clix',credit:'Ad | #Clix | twitch.tv/clix',campaign:'https://reachclipping.com/ClixGTA',
+    facts:"Clix's GTA VI marathon beginning November 18, 2026. Require genuine gameplay and Clix as the primary visible subject. Credit Clix with #Clix. No AI-generated footage, added logos, major story spoilers or negative false framing."},
   {user:'kreekcraft',name:'KreekCraft',credit:'Ad | KreekCraft',campaign:'https://contentrewards.com/c/campaigns/2eaa14fb-6927-4136-897e-b096e0d907d6',
     facts:"KreekCraft's GTA VI livestream. Require genuine GTA VI gameplay and the creator's visible reaction. Preserve the source stream overlay and credit the livestream. Exclude major story spoilers and commercial breaks."},
   {user:'lacy',name:'Lacy',credit:liveCredit,campaign:'https://reachclipping.com/LACYGTA',facts:liveSourceFacts}

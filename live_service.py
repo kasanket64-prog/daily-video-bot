@@ -137,7 +137,7 @@ def run(job):
             raise ValueError("Missing reviewed creators")
         for policy in creators:
             user = policy.get("user")
-            if user not in ("kreekcraft", "lacy"):
+            if user not in ("clix", "kreekcraft", "lacy"):
                 continue
             result["stage"] = "lookup"
             try:
