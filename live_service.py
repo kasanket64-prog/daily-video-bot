@@ -33,7 +33,7 @@ def verified(body, signature, now=None):
     job = json.loads(body)
     now = time.time() if now is None else now
     if (job.get("callback") != ORIGIN or job.get("channel") != CHANNEL
-            or not re.fullmatch(r"youtube:[\w-]{11}", job.get("source_id", ""))
+            or job.get("source_id") != "twitch:lacy"
             or not isinstance(job.get("token"), str) or not 30 < len(job["token"]) < 2000
             or type(job.get("exp")) not in (int, float)
             or not now < job["exp"] <= now + 300):
@@ -113,11 +113,10 @@ def inspection(path, duration):
 
 
 def run(job):
-    result = {"delivered": 0, "held": 0, "state": "complete"}
+    result = {"delivered": 0, "held": 0, "state": "complete", "stage": "lookup"}
     try:
         history = post(job, "short-history", {})
-        used = [(x["start"], x["start"] + x.get("duration", 24)) for x in history
-                if x.get("source_id") == job["source_id"] and x.get("start") is not None]
+        used = []
         slots = [n for n in range(1, 41) if not any(x["id"] == job["batchDay"] + f"-g{n:02d}-short" for x in history)]
         if not slots:
             return
@@ -126,6 +125,11 @@ def run(job):
         if not stream.get("is_live") or not re.search(r"GTA\s*(6|VI)\b", stream.get("description", "") + stream.get("title", ""), re.I):
             result["state"] = "offline"
             return
+        if stream.get("uploader_id", "").casefold() != "lacy" or not re.fullmatch(r"[0-9]{9,20}", str(stream.get("id", ""))):
+            raise ValueError("Wrong live broadcast")
+        job["source_id"] = "twitch:" + str(stream["id"])
+        used = [(x["start"], x["start"] + x.get("duration", 24)) for x in history
+                if x.get("source_id") == job["source_id"] and x.get("start") is not None]
         formats = [f for f in stream["formats"] if 360 <= (f.get("height") or 0) <= 720]
         if not formats:
             raise ValueError("No playable video")
@@ -134,12 +138,14 @@ def run(job):
             folder = Path(tmp)
             source = folder / "live.mkv"
             absolute = math.floor(time.time()) - 30
+            result["stage"] = "capture"
             ffmpeg(["-rw_timeout", "15000000", "-protocol_whitelist", "https,tls,tcp,crypto",
                     "-i", selected["url"], "-t", "90", "-fs", "64000000", "-map", "0:v:0",
                     "-map", "0:a:0", "-c", "copy", str(source)], folder)
             duration = float(probe(source)["format"]["duration"])
             if duration < 24:
                 raise ValueError("Live capture too short")
+            result["stage"] = "selection"
             moments = neon.rank(source, duration, count=2, length=24)
             for candidate in moments:
                 start = int(candidate["start"])
@@ -159,14 +165,18 @@ def run(job):
                     clipLanguage="en", analysis=dict(angle="Live gameplay and reaction", audience="GTA VI viewers",
                     story_arc="Setup, visible action and reaction", emotion="Surprise",
                     sound_plan="Muted stream audio", cta="Watch the outcome"))
+                result["stage"] = "reservation"
                 reservation = post(job, "short", metadata)
                 if reservation.get("skip"):
                     continue
+                result["stage"] = "render"
                 output = render(source, (start, stop), folder)
                 raw, review = inspection(output, 24)
+                result["stage"] = "inspection"
                 approved = post(job, "inspect/" + reservation["id"], review)
                 used.append((absolute+start, absolute+stop))
                 if approved.get("passed") is True:
+                    result["stage"] = "delivery"
                     post(job, "preview/" + reservation["id"], raw, "video/mp4")
                     result["delivered"] += 1
                 else:

@@ -1,5 +1,19 @@
 # Set up your GTA VI Reel bot
 
+## Unattended NeonClipping service
+
+The recurring deployment uses Cloudflare's five-minute cron and the Free web service at https://gta-neon-live.onrender.com. The service runs the original MIT-licensed NeonClipping highlight detector from revision `3a3da401`. It checks Lacy's current Twitch broadcast and its GTA VI marathon title, captures a short window, ranks sound and visual activity, and prepares up to two candidates per check. Source IDs follow the actual Twitch broadcast automatically. The setup runs independently of this chat and the owner's computer.
+
+Each cut enlarges Lacy's facecam above the gameplay and includes `Ad | #LACY` and the stream credit. Stream audio is muted in this deployment. The final inspection requires a visible setup and payoff and checks campaign suitability before sending the exact file to Telegram. Each file needs its own owner approval. An inspector can hold every candidate in a window. Views and daily output depend on the footage.
+
+Cloudflare keeps `LIVE_WATCH_ENABLED=true`, `LIVE_RENDER_URL`, and `LIVE_CHANNEL_ID` as configuration. It keeps the private signing key and callback secret in Worker Secrets. Render has only the public verification key. Each work request carries temporary callback access, and the service cannot select a different creator or bypass final-file inspection. D1 keeps the daily slots, source intervals, upload state and last dispatch/result across service restarts. Existing preview testing can stay enabled because the live route has its own authenticated approval flow.
+
+The free host provides 0.1 CPU and 512 MB RAM. Processing can take several minutes, and capture windows leave gaps between checks. Render may restart or suspend free services under its published usage limits. A restart discards temporary video and the next cron retries. A daily failure notice goes to Telegram when the scheduler or clipper reports an error. Free hosting has no continuous-coverage guarantee and cannot guarantee 30–40 worthwhile clips every day.
+
+To pause capture, set the Worker's `LIVE_WATCH_ENABLED=false`. Keep the five-minute cron for pending Telegram decisions. YouTube remains private until its visibility setting is changed. Instagram requires its own connected account before that destination can finish.
+
+The historical GitHub runner instructions below describe the development and pilot path. The recurring live video service uses Render.
+
 GitHub renders gameplay in the cloud. Cloudflare holds the account credentials and records your Telegram decisions. Each daily run can prepare up to 40 distinct clips. Telegram sends each inspected live preview with its own approval buttons as soon as it is ready.
 
 ## How the GTA workflow fits together
