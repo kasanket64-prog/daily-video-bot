@@ -18,7 +18,7 @@ GitHub renders gameplay in the cloud. Cloudflare holds the account credentials a
 
 ## Connect accounts from a phone
 
-An authenticated operator can issue a one-use setup link through `/owner-review/connect-link`. The link lasts one hour. It opens a private phone-friendly page at the Worker's `/connect` path. It sets a Secure, HttpOnly session cookie and uses short-lived, single-use OAuth state bound to that session.
+An authenticated operator can issue a one-use setup link through `/owner-review/connect-link`. The link lasts one hour. It opens a private phone-friendly page at the Worker's `/connect` path. It sets a Secure, HttpOnly session cookie and uses short-lived, single-use OAuth state bound to that session. Publishing error notifications include a Reconnect accounts button; only the configured Telegram owner in the private approval chat can use it to request a fresh link.
 
 For Google, add the callback URI shown on the setup page to the existing YouTube OAuth client, then sign in with the channel owner's account. Grant upload and read-only channel access. The page displays the channel and upload visibility before its explicit enable button activates the connection. Google apps in Testing can issue seven-day refresh tokens, so check the Audience publishing status before reconnecting.
 

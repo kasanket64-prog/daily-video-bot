@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {saveConnection,readConnection,socialEnv,issueConnectLink,connectRoute} from './connect.mjs';
+import worker from './worker.mjs';
 
 function environment(){
   const rows=new Map();
@@ -120,5 +121,22 @@ test('OAuth provider errors never echo credentials or activate an account',async
     assert.equal(response.status,400);
     assert.ok(!(await response.text()).includes('secret-client'));
     assert.equal(await readConnection(env,'youtube'),null);
+  }finally{globalThis.fetch=old;}
+});
+
+test('only the Telegram owner in the private approval chat can request a fresh setup link',async()=>{
+  const env={...environment(),GTA_REELS_ENABLED:'true',LIVE_WATCH_ENABLED:'true',SHORT_PREVIEW_TEST:'true',
+    OWNER_REVIEW_REEL:{id:'2026-11-21-g39-short'},TELEGRAM_BOT_TOKEN:'bot',TELEGRAM_WEBHOOK_SECRET:'secret',TELEGRAM_USER_ID:'7',TELEGRAM_CHAT_ID:'7'};
+  const old=globalThis.fetch;let sent=0;
+  globalThis.fetch=async(url,{body})=>{
+    if(url.endsWith('/sendMessage')){sent++;assert.match(JSON.parse(body).reply_markup.inline_keyboard[0][0].url,/^https:\/\/bot\.example\.com\/connect\/[a-f0-9]{64}$/);}
+    return Response.json({ok:true,result:{}});
+  };
+  const request=(user,chatType='private')=>new Request(env.WORKER_URL+'/telegram',{method:'POST',headers:{'X-Telegram-Bot-Api-Secret-Token':'secret'},
+    body:JSON.stringify({callback_query:{id:'query',data:'connect-accounts',from:{id:user},message:{chat:{id:7,type:chatType},message_id:1}}})});
+  try{
+    assert.equal((await worker.fetch(request(8),env)).status,200);assert.equal(sent,0);
+    assert.equal((await worker.fetch(request(7,'group'),env)).status,200);assert.equal(sent,0);
+    assert.equal((await worker.fetch(request(7),env)).status,200);assert.equal(sent,1);
   }finally{globalThis.fetch=old;}
 });

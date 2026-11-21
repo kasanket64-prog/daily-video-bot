@@ -534,6 +534,15 @@ async function webhook(request, env, allowedIds) {
   if (!env.TELEGRAM_WEBHOOK_SECRET || request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== env.TELEGRAM_WEBHOOK_SECRET) return json({ error: 'Denied' }, 403);
   const callback = (await request.json()).callback_query;
   if (!callback) return json({ ok: true });
+  if (callback.data === 'connect-accounts' && env.SOCIAL_TOKEN_KEY &&
+      String(callback.from?.id) === String(env.TELEGRAM_USER_ID) &&
+      String(callback.message?.chat?.id) === String(env.TELEGRAM_CHAT_ID) && callback.message?.chat?.type === 'private') {
+    const url=await issueConnectLink(env);
+    await telegram(env,'sendMessage',{chat_id:env.TELEGRAM_CHAT_ID,text:'Your private account setup link expires in one hour. Confirm the destination account before enabling Telegram-approved uploads.',
+      reply_markup:{inline_keyboard:[[{text:'Connect publishing accounts',url}]]}});
+    await telegram(env,'answerCallbackQuery',{callback_query_id:callback.id,text:'Private setup link sent.'});
+    return json({ok:true});
+  }
   const match = /^(approve|reject):(\d{4}-\d{2}-\d{2}(?:(?:-g\d{2})?-short|-cartoon-(?:episode|short))?)$/.exec(callback.data || '');
   let accepted = false;
   const job = match ? await row(env, match[2]) : null;
@@ -611,7 +620,9 @@ export async function publishDestinations(env,job,meta) {
       const saved=await env.DB.prepare('INSERT OR IGNORE INTO settings(name,value) VALUES(?,?)')
         .bind('failure:'+job.id+':'+platform,'notified').run();
       if (saved.meta.changes) {
-        try { await message(env,`${platform} upload for ${job.id} needs attention. Approval is saved; the other connected destination can continue. Check this platform before retrying an interrupted upload.`); } catch {}
+        try { await telegram(env,'sendMessage',{chat_id:env.TELEGRAM_CHAT_ID,
+          text:`${platform} upload for ${job.id} needs attention. Approval is saved; the other connected destination can continue. Check this platform before retrying an interrupted upload.`,
+          ...(env.SOCIAL_TOKEN_KEY?{reply_markup:{inline_keyboard:[[{text:'Reconnect accounts',callback_data:'connect-accounts'}]]}}:{})}); } catch {}
       }
     }
   }
