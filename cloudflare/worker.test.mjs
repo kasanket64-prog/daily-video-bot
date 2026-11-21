@@ -24,6 +24,11 @@ test('owner review binds the upload key and inspection to one file and expires',
     headers:{Authorization:'Bearer '+token,'Content-Length':'77'},body:JSON.stringify({sha256:'3'.repeat(64)})});
   assert.equal((await worker.fetch(request('0'.repeat(64)),cfg)).status,403);
   assert.equal((await worker.fetch(request(key),cfg)).status,409);
+  const other = {...cfg.OWNER_REVIEW_REEL, id:'2026-11-21-g39-short', keyHash:'0'.repeat(64)};
+  const multi = {...cfg, OWNER_REVIEW_REEL:[cfg.OWNER_REVIEW_REEL,other]};
+  const original = request(key);
+  assert.equal((await worker.fetch(new Request(original.url+'?id='+other.id,original),multi)).status,403);
+  assert.equal((await worker.fetch(request(key),multi)).status,409);
   cfg.OWNER_REVIEW_REEL.expires = 0;
   assert.equal((await worker.fetch(request(key),cfg)).status,404);
 });
