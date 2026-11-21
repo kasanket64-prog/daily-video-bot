@@ -1,4 +1,4 @@
-This directory contains the unchanged NeonClipping highlight detector.
+This directory contains the NeonClipping highlight detector with FFmpeg thread limits for the 512 MB cloud instance. The scoring logic is unchanged.
 
 Source https://github.com/iamajmeena/neonclipping
 

@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg fonts-de
 WORKDIR /app
 COPY requirements-live.txt ./
 RUN pip install --no-cache-dir -r requirements-live.txt
-COPY live_service.py live-public.pem ./
+COPY live_service.py short_render.py live-public.pem ./
 COPY third-party/neonclipping/ third-party/neonclipping/
 RUN useradd --create-home clipper && chown -R clipper:clipper /app
 USER clipper
