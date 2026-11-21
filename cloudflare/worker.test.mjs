@@ -1,6 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker, { validateClaims, authenticate, validateMetadata, allowedApproval, parseTrends, prepareJob, uploadsComplete, fitnessTrends, selectFitnessClip, inspectionPassed, acceptPreview } from './worker.mjs';
+import {liveToken,validateLiveToken} from './worker.mjs';
+
+test('live capability expires and cannot authorize another creator or a modified payload', async () => {
+  const env={LIVE_CALLBACK_SECRET:'test'.repeat(16),LIVE_CHANNEL_ID:'UCeoZXkaJDtdTHafgoZeDcAA'};
+  const claims={channel:env.LIVE_CHANNEL_ID,liveSource:'youtube:6MvZUbYzLEI',run_id:crypto.randomUUID(),exp:Math.floor(Date.now()/1000)+60};
+  const request=token=>new Request('https://example.com/live/short-history',{method:'POST',headers:{Authorization:'Bearer '+token}});
+  const token=await liveToken(env,claims);
+  assert.deepEqual(await validateLiveToken(request(token),env),claims);
+  await assert.rejects(validateLiveToken(request('a'+token),env));
+  for(const change of [{channel:'another'},{exp:0},{exp:null},{liveSource:'other'},{run_id:'../other'}]){
+    await assert.rejects(validateLiveToken(request(await liveToken(env,{...claims,...change})),env));
+  }
+  const response=await worker.fetch(request(token),{...env,GTA_REELS_ENABLED:'true',LIVE_WATCH_ENABLED:'false'});
+  assert.equal(response.status,503);
+});
 
 test('inspector requires every explicit check and never treats missing or string checks as passed', () => {
   const checks = { facts_supported: true, visuals_relevant: true, captions_readable: true, narration_matches: true, hook_clear: true };
