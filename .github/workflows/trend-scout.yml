@@ -2,8 +2,14 @@ name: Scout trends for Shorts
 
 on:
   workflow_dispatch:
+    inputs:
+      watch_live:
+        description: Watch a reviewed live GTA feed
+        type: boolean
+        default: false
   schedule:
     - cron: '37 0 * * *'
+    - cron: '3,18,33,48 * * * *'
 
 permissions:
   contents: read
@@ -15,11 +21,16 @@ concurrency:
 
 jobs:
   scout:
-    if: (vars.GTA_REELS_ENABLED != 'true' || github.event.repository.private == false) && (github.event_name == 'workflow_dispatch' || vars.TREND_SCOUT_ENABLED == 'true' || vars.GTA_REELS_ENABLED == 'true')
+    if: >-
+      (vars.GTA_REELS_ENABLED != 'true' || github.event.repository.private == false) &&
+      (github.event_name == 'workflow_dispatch' || vars.TREND_SCOUT_ENABLED == 'true' || vars.GTA_REELS_ENABLED == 'true') &&
+      ((github.event.schedule != '3,18,33,48 * * * *' && !inputs.watch_live) ||
+       (vars.GTA_REELS_ENABLED == 'true' && (inputs.watch_live || vars.GTA_LIVE_WATCH_ENABLED == 'true')))
     runs-on: ubuntu-latest
     timeout-minutes: 175
     env:
       GTA_REELS_ENABLED: ${{ vars.GTA_REELS_ENABLED }}
+      GTA_LIVE_RUN: ${{ (github.event.schedule == '3,18,33,48 * * * *' || inputs.watch_live) && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,6 +51,12 @@ jobs:
         run: |
           if [[ "$(cat "$RUNNER_TEMP/reviewed-sources.json")" == '[]' ]]; then
             echo "No reviewed footage catalog configured. Keeping discovery results only."
+            exit 0
+          fi
+          if [[ "$GTA_LIVE_RUN" == true ]] && ! jq -e --slurpfile catalog "$RUNNER_TEMP/reviewed-sources.json" '
+            [.videos[] | select(.live_started_at) | .source_id] as $live |
+            any($catalog[0][]; .media_kind == "live-hls" and (.source_id as $id | $live | index($id) != null))' trend-snapshot.json >/dev/null; then
+            echo "No reviewed live broadcast is on air."
             exit 0
           fi
           printf '%s' "${SHORT_DRAFT_HISTORY:-[]}" > "$RUNNER_TEMP/short-history.json"

@@ -1,27 +1,22 @@
 """Make up to forty distinct gameplay previews per India-local day."""
 import json
+import os
 import subprocess
 import sys
+import time
 from contextlib import redirect_stdout
 from pathlib import Path
 
 from cloud_render import http, identity, inspect_and_deliver, worker_url
+from gta_live import capture
 from short_candidates import choose_candidate
-from short_render import gameplay_moments, gta_levels
+from short_render import gameplay_moments, gta_signals
 
 def ffmpeg(source, args, **kwargs):
     return subprocess.run(["ffmpeg", "-y", "-nostdin", "-v", "error",
         "-protocol_whitelist", "file", "-format_whitelist", "mov,matroska,webm",
         *args[:args.index("INPUT")], "-i", str(source), *args[args.index("INPUT")+1:]],
         check=True, timeout=600, **kwargs)
-
-
-def motion(source):
-    result = ffmpeg(source, ["INPUT", "-map", "0:v:0", "-an", "-t", "7200",
-        "-vf", "fps=1,scale=96:54,signalstats,metadata=print:key=lavfi.signalstats.YDIF:file=-",
-        "-f", "null", "-"], capture_output=True, text=True)
-    return [float(line.split("=")[1]) for line in result.stdout.splitlines()
-            if line.startswith("lavfi.signalstats.YDIF=")]
 
 
 def edit(source, start, duration, entry, folder, model):
@@ -55,6 +50,40 @@ def edit(source, start, duration, entry, folder, model):
     return out, " ".join(words), info.language
 
 
+def source_windows(entry, folder, used, deadline):
+    if entry.get("media_kind") != "live-hls":
+        source = folder / "source.mp4"
+        subprocess.run(["curl", "--proto", "=https", "--fail", "--silent", "--max-time", "300",
+            "--max-filesize", "1000000000", "--output", str(source), "--", entry["media_url"]],
+            check=True, timeout=305, stderr=subprocess.DEVNULL)
+        for start, stop in gameplay_moments(*gta_signals(source), used):
+            yield source, start, start, stop-start
+        return
+
+    cache = {}
+    previous_end = 0
+    while time.monotonic() < deadline:
+        try:
+            update = capture(entry, folder, previous_end, cache)
+        except OSError:
+            # A live segment can roll off the playlist during download.
+            time.sleep(min(12, max(0, deadline-time.monotonic())))
+            continue
+        if update:
+            source, offset, previous_end, finished = update
+            if source is None:
+                return
+            levels, movement = gta_signals(source)
+            prior = [(a-offset, b-offset) for a,b in used]
+            for start, stop in gameplay_moments(levels, movement, prior):
+                if start == 0 or (not finished and stop >= len(levels)-2):
+                    continue  # Wait for a window containing the setup and payoff.
+                yield source, start, start+offset, stop-start
+            if finished:
+                return
+        time.sleep(min(12, max(0, deadline-time.monotonic())))
+
+
 def run(snapshot, catalog, folder):
     from faster_whisper import WhisperModel
     worker = worker_url()
@@ -70,10 +99,13 @@ def run(snapshot, catalog, folder):
     slots = iter(i for i in range(1, (1 if snapshot["previewOnly"] else 40) + 1) if i not in occupied)
     slot = next(slots, None)
     folder.mkdir(parents=True, exist_ok=True)
-    source = folder / "source.mp4"
     model = None
     delivered = held = 0
-    candidates = list(catalog)
+    live = os.getenv("GTA_LIVE_RUN") == "true"
+    active_ids = {v["source_id"] for v in snapshot["videos"] if v.get("live_started_at")}
+    candidates = [e for e in catalog if (e.get("media_kind") == "live-hls") == live
+                  and (not live or e["source_id"] in active_ids)]
+    deadline = time.monotonic() + 14 * 60
     while slot and candidates:
         entry = choose_candidate(snapshot, candidates, [])
         if not entry:
@@ -84,22 +116,19 @@ def run(snapshot, catalog, folder):
         if any(h.get("start") is None for h in prior):
             continue
         used = [(h["start"], h["start"] + (h.get("duration") or 24)) for h in prior]
-        try:
-            subprocess.run(["curl", "--proto", "=https", "--fail", "--silent", "--max-time", "300",
-                "--max-filesize", "1000000000", "--output", str(source), "--", entry["media_url"]],
-                check=True, timeout=305, stderr=subprocess.DEVNULL)
-            moments = gameplay_moments(gta_levels(source), motion(source), used)
-        except (ValueError, subprocess.SubprocessError):
-            print("Skipping an unreadable gameplay recording", file=sys.stderr)
-            continue
-        for start, stop in moments:
-            duration = stop - start
-            if not slot:
+        windows = source_windows(entry, folder, used, deadline)
+        while slot:
+            try:
+                source, local_start, start, duration = next(windows)
+            except StopIteration:
+                break
+            except (ValueError, OSError, subprocess.SubprocessError):
+                print("Skipping an unreadable gameplay feed or recording", file=sys.stderr)
                 break
             if model is None:
                 model = WhisperModel("tiny", device="cpu", compute_type="int8")
             try:
-                draft, transcript, language = edit(source, start, duration, entry, folder, model)
+                draft, transcript, language = edit(source, local_start, duration, entry, folder, model)
             except subprocess.SubprocessError:
                 print("Holding a moment that could not be rendered", file=sys.stderr)
                 continue
@@ -112,6 +141,7 @@ def run(snapshot, catalog, folder):
                     story_arc=f"Gameplay highlight at {start} seconds", emotion="Reaction",
                     sound_plan="Original cleared stream audio", cta="Watch the outcome"))
             job = post("short", metadata)
+            used.append((start, start+duration))
             if not job.get("skip"):
                 try:
                     with redirect_stdout(sys.stderr):

@@ -27,6 +27,9 @@ def rank_videos(items, *, observed_at):
             "category_id": snippet["categoryId"],
             "published_at": snippet["publishedAt"],
             "chart_position": position,
+            **({"live_started_at": item["liveStreamingDetails"]["actualStartTime"]}
+               if snippet.get("liveBroadcastContent") == "live"
+               and item.get("liveStreamingDetails", {}).get("actualStartTime") else {}),
         })
     return {"observed_at": observed_at.isoformat(), "videos": videos}
 
