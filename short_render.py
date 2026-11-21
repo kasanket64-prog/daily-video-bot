@@ -10,17 +10,35 @@ import sys
 from tempfile import TemporaryDirectory
 
 
-def gta_levels(source, *, ffmpeg="ffmpeg"):
-    """Rank two-second reactions against the previous minute of game audio."""
-    result = subprocess.run([
+def _scan_gameplay(source, ffmpeg, motion_dir=None):
+    command = [
         ffmpeg, "-nostdin", "-v", "error", "-protocol_whitelist", "file",
         "-format_whitelist", "mov,matroska,webm", "-i", str(source), "-map", "0:a:0",
         "-t", "7200", "-af", "aresample=8000,asetnsamples=n=8000:p=0,"
         "astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-",
         "-f", "null", "-",
-    ], capture_output=True, text=True, check=True, timeout=480)
+    ]
+    if motion_dir is not None:
+        command.extend(["-map", "0:v:0", "-an", "-t", "7200", "-vf",
+                        "fps=1,scale=96:54,signalstats,metadata=print:key=lavfi.signalstats.YDIF:file=motion.txt",
+                        "-f", "null", "-"])
+    result = subprocess.run(command, cwd=motion_dir, capture_output=True, text=True,
+                            check=True, timeout=1080 if motion_dir is not None else 480)
     return [max(-80., float(line.split("=")[1])) for line in result.stdout.splitlines()
             if line.startswith("lavfi.astats.Overall.RMS_level=")]
+
+
+def gta_levels(source, *, ffmpeg="ffmpeg"):
+    return _scan_gameplay(source, ffmpeg)
+
+
+def gta_signals(source, *, ffmpeg="ffmpeg"):
+    """Read the source once and keep motion metadata separate from audio metadata."""
+    with TemporaryDirectory() as folder:
+        levels = _scan_gameplay(Path(source).resolve(), ffmpeg, folder)
+        movement = (Path(folder) / "motion.txt").read_text(encoding="utf-8")
+    return levels, [float(line.split("=")[1]) for line in movement.splitlines()
+                    if line.startswith("lavfi.signalstats.YDIF=")]
 
 
 def gta_peaks(levels, movement):

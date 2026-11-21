@@ -1,9 +1,30 @@
+from pathlib import Path
+import shutil
+import subprocess
+from tempfile import TemporaryDirectory
 import unittest
 
-from short_render import gameplay_moments, gta_windows
+from short_render import gameplay_moments, gta_levels, gta_signals, gta_windows
 
 
 class GtaWindowsTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("ffmpeg"), "requires FFmpeg")
+    def test_combined_scan_preserves_audio_and_motion(self):
+        with TemporaryDirectory() as folder:
+            source = Path(folder) / "test stream.mkv"
+            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                            "testsrc2=size=96x54:rate=10:duration=6", "-f", "lavfi", "-i",
+                            "sine=duration=6", "-c:v", "ffv1", "-c:a", "pcm_s16le", str(source)], check=True)
+            expected = subprocess.check_output(["ffmpeg", "-v", "error", "-i", str(source), "-an",
+                "-vf", "fps=1,scale=96:54,signalstats,metadata=print:key=lavfi.signalstats.YDIF:file=-",
+                "-f", "null", "-"], text=True)
+            levels, movement = gta_signals(source)
+            self.assertEqual(levels, gta_levels(source))
+            self.assertEqual(len(levels), 6)
+            self.assertEqual(len(movement), 6)
+            self.assertEqual(movement, [float(line.split("=")[1]) for line in expected.splitlines()
+                                        if line.startswith("lavfi.signalstats.YDIF=")])
+
     def test_daily_limit_and_used_windows(self):
         levels = [-45.] * 3600
         for i in range(30, 3500, 40):
