@@ -10,7 +10,7 @@ Cloudflare keeps `LIVE_WATCH_ENABLED=true`, `LIVE_RENDER_URL`, and `LIVE_CHANNEL
 
 The free host provides 0.1 CPU and 512 MB RAM. Processing can take several minutes, and capture windows leave gaps between checks. Render may restart or suspend free services under its published usage limits. A restart discards temporary video and the next cron retries. A daily failure notice goes to Telegram when the scheduler or clipper reports an error. Free hosting has no continuous-coverage guarantee and cannot guarantee 30–40 worthwhile clips every day.
 
-To pause capture, set the Worker's `LIVE_WATCH_ENABLED=false`. Keep the five-minute cron for pending Telegram decisions. YouTube remains private until its visibility setting is changed. Instagram requires its own connected account before that destination can finish.
+To pause capture, set the Worker's `LIVE_WATCH_ENABLED=false`. Pausing also holds pending live uploads. YouTube remains private until its visibility setting is changed. Instagram requires its own connected account before that destination can finish.
 
 The historical GitHub runner instructions below describe the development and pilot path. The recurring live video service uses Render.
 
