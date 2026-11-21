@@ -855,7 +855,6 @@ async function ownerReview(request, env, action) {
   const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(key.slice(7)))), b=>b.toString(16).padStart(2,'0')).join('');
   if (digest !== reel.keyHash) return json({error:'Denied'},403);
   const claims = {run_id:reel.sha256};
-  if (action === 'connect-link' && request.method === 'POST') return json({url:await issueConnectLink(env)});
   if (action === 'connections' && request.method === 'GET') {
     const status = {
       telegram:{configured:Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID && env.TELEGRAM_WEBHOOK_SECRET),webhook_matches:false},
@@ -936,7 +935,7 @@ export default {
       if (cartoonRoute && !cartoonsEnabled) return json({ error: 'Cartoon automation is disabled' }, 503);
       if (url.pathname.startsWith('/live/')) return await liveRoute(request,env,url.pathname);
       if (url.pathname.startsWith('/owner-review/')) return await ownerReview(request, env, url.pathname.slice('/owner-review/'.length));
-      if ((enabled || cartoonsEnabled || (gta && (!previewTest || env.OWNER_REVIEW_REEL))) && url.pathname === '/telegram' && request.method === 'POST') return await webhook(request, env, previewTest ? ownerReviews(env).map(reel => reel.id) : undefined);
+      if ((enabled || cartoonsEnabled || (gta && (!previewTest || env.LIVE_WATCH_ENABLED === 'true' || env.OWNER_REVIEW_REEL))) && url.pathname === '/telegram' && request.method === 'POST') return await webhook(request, env, previewTest ? ownerReviews(env).map(reel => reel.id) : undefined);
       if (!gta && !enabled && !previewTest && !cartoonRoute) return json({ error: 'Automation is disabled' }, 503);
       if (request.method !== 'POST' || !(cartoonRoute || /^\/render\/(job|short|short-script|short-inputs|short-history|(preview|inspect)\/\d{4}-\d{2}-\d{2}(?:(?:-g\d{2})?-short(?:-test)?)?)$/.test(url.pathname))) return json({ error: 'Not found' }, 404);
       let claims;

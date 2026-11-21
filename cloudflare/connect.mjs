@@ -133,6 +133,13 @@ export async function connectRoute(request,env){
     if(new URL(request.url).origin!==new URL(env.WORKER_URL).origin) return page('<p>Wrong setup host.</p>',403);
     await key(env);
     const path=new URL(request.url).pathname;
+    if(path==='/connect/admin-link'&&request.method==='POST'){
+      const admin=JSON.parse(env.SOCIAL_SETUP_ADMIN||'{}');
+      const token=/^Bearer ([a-f0-9]{64})$/.exec(request.headers.get('Authorization')||'')?.[1];
+      if(!token||!/^[a-f0-9]{64}$/.test(admin.key||'')||!Number.isFinite(admin.expires)||admin.expires<=now()||
+          await hash(token)!==await hash(admin.key)) return page('<p>Invalid setup authorization.</p>',403);
+      return Response.json({url:await issueConnectLink(env)},{headers});
+    }
     const link=/^\/connect\/([a-f0-9]{64})$/.exec(path);
     if(link&&request.method==='GET'){
       await take(env,'social:link:'+await hash(link[1]));

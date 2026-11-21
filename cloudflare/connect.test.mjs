@@ -52,6 +52,15 @@ test('private setup links are single-use and expired links and cross-origin form
   env.rows.set(last,JSON.stringify({expires:0}));
   assert.equal((await connectRoute(new Request(expired),env)).status,400);
 });
+
+test('issuing a setup link requires a separate unexpired bootstrap credential',async()=>{
+  const env={...environment(),SOCIAL_SETUP_ADMIN:JSON.stringify({key:'3'.repeat(64),expires:Date.now()/1000+600})};
+  const request=token=>new Request(env.WORKER_URL+'/connect/admin-link',{method:'POST',headers:{Authorization:'Bearer '+token}});
+  assert.equal((await connectRoute(request('1'.repeat(64)),env)).status,403);
+  assert.equal((await connectRoute(request('3'.repeat(64)),env)).status,200);
+  env.SOCIAL_SETUP_ADMIN=JSON.stringify({key:'3'.repeat(64),expires:0});
+  assert.equal((await connectRoute(request('3'.repeat(64)),env)).status,403);
+});
 test('YouTube OAuth is session-bound, single-use and needs explicit channel confirmation',async()=>{
   const env=environment(),request=await open(env),other=await open(env);
   const started=await connectRoute(request('/connect/youtube/start',{}),env);
@@ -126,7 +135,7 @@ test('OAuth provider errors never echo credentials or activate an account',async
 
 test('only the Telegram owner in the private approval chat can request a fresh setup link',async()=>{
   const env={...environment(),GTA_REELS_ENABLED:'true',LIVE_WATCH_ENABLED:'true',SHORT_PREVIEW_TEST:'true',
-    OWNER_REVIEW_REEL:{id:'2026-11-21-g39-short'},TELEGRAM_BOT_TOKEN:'bot',TELEGRAM_WEBHOOK_SECRET:'secret',TELEGRAM_USER_ID:'7',TELEGRAM_CHAT_ID:'7'};
+    TELEGRAM_BOT_TOKEN:'bot',TELEGRAM_WEBHOOK_SECRET:'secret',TELEGRAM_USER_ID:'7',TELEGRAM_CHAT_ID:'7'};
   const old=globalThis.fetch;let sent=0;
   globalThis.fetch=async(url,{body})=>{
     if(url.endsWith('/sendMessage')){sent++;assert.match(JSON.parse(body).reply_markup.inline_keyboard[0][0].url,/^https:\/\/bot\.example\.com\/connect\/[a-f0-9]{64}$/);}
