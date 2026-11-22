@@ -5,6 +5,30 @@ import worker, { validateClaims, authenticate, validateMetadata, allowedApproval
 import {liveToken,validateLiveToken,restorePinnedSourceWindows} from './worker.mjs';
 import {validLivePlan,publishDestinations,uploadDestinations} from './worker.mjs';
 
+for(const scenario of ['recover','exhaust','invalid-key','long-cooldown','incomplete']) test('live AI recovery: '+scenario,async()=>{
+  const old=globalThis.fetch;let calls=0;
+  const env={LIVE_CALLBACK_SECRET:'test'.repeat(16),LIVE_CHANNEL_ID:'UCeoZXkaJDtdTHafgoZeDcAA',LIVE_WATCH_ENABLED:'true',GTA_REELS_ENABLED:'true',GEMINI_MODEL:'test',GEMINI_API_KEY:'private-key',
+    DB:{prepare(){return {bind(){return {async run(){return {meta:{changes:1}};}};}};}}};
+  globalThis.fetch=async(url,init)=>{
+    calls++;assert.match(url,/generativelanguage.googleapis.com/);assert.ok(init.signal instanceof AbortSignal);
+    if(scenario==='invalid-key') return Response.json({error:{message:'private-key'}},{status:403});
+    if(scenario==='long-cooldown') return Response.json({error:{}},{status:429,headers:{'Retry-After':'300'}});
+    if(scenario==='exhaust'||scenario==='recover'&&calls<3) return Response.json({error:{}},{status:503,headers:{'Retry-After':'0'}});
+    if(scenario==='incomplete') return Response.json({candidates:[{finishReason:'SAFETY'}]});
+    return Response.json({candidates:[{content:{parts:[{text:JSON.stringify({usable:false,reason:'No qualifying gameplay'})}]}}]});
+  };
+  try{
+    const token=await liveToken(env,{channel:env.LIVE_CHANNEL_ID,liveSource:'twitch:reviewed',run_id:crypto.randomUUID(),exp:Math.floor(Date.now()/1000)+600});
+    const request=new Request('https://example.com/live/plan',{method:'POST',headers:{Authorization:'Bearer '+token},body:JSON.stringify({creator:'clix',frames:Array(6).fill('a'.repeat(104))})});
+    const response=await worker.fetch(request,env),body=await response.json();
+    assert.equal(response.status,['recover','incomplete'].includes(scenario)?200:503);
+    assert.equal(calls,['recover','exhaust'].includes(scenario)?3:1);
+    if(scenario==='recover'||scenario==='incomplete') assert.equal(body.usable,false);
+    else {assert.equal(body.provider,'Gemini');assert.equal(body.provider_status,scenario==='exhaust'?503:scenario==='invalid-key'?403:429);}
+    assert.ok(!JSON.stringify(body).includes('private-key'));
+  }finally{globalThis.fetch=old;}
+});
+
 test('live editorial plans require bounded factual text and a visible facecam crop', () => {
   const good={usable:true,standout:true,highlight_type:'escape',title:'The red car gets away',hook:'Watch the red car',payoff:'The car escapes',facecam:{x:0,y:0,w:.25,h:.4}};
   assert.equal(Boolean(validLivePlan(good)),true);
