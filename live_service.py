@@ -223,6 +223,13 @@ def run(job):
         creators = job.get("creators", [])
         if not creators:
             raise ValueError("Missing reviewed creators")
+        creator_order = [policy.get("user") for policy in creators]
+        last_creator = next((item.get("creator") for item in reversed(history)
+                             if item.get("id", "").startswith(job["batchDay"] + "-g")
+                             and item.get("creator") in creator_order), None)
+        if last_creator:
+            index = creator_order.index(last_creator) + 1
+            creators = creators[index:] + creators[:index]
         seen = set(post(job, "clip-history", {})) if any(p.get("clips_channel_id") for p in creators) else set()
         # Finish before the signed callback expires, including bounded AI retries.
         deadline = time.monotonic() + 600
