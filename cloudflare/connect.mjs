@@ -131,24 +131,11 @@ async function home(env,id){
   body+='<section><h2>YouTube</h2><p>'+ (youtube?'Connected to '+escape(youtube.name)+' ('+escape(youtube.visibility)+').':'Not connected yet.')+'</p>';
   body+='<p>One-time Google setup: in your OAuth client, add this <strong>Authorized redirect URI</strong></p><p><code>'+escape(ycallback)+'</code></p><p><a href="https://console.cloud.google.com/auth/clients">Open Google OAuth clients</a>. Edit the existing client with this ID</p><p><code>'+escape(env.YOUTUBE_CLIENT_ID)+'</code></p><p>If the Google app Audience says <strong>Testing</strong>, move it to Production before reconnecting to avoid seven-day refresh tokens.</p><form method="post" action="/connect/youtube/start"><button>Sign in with the channel’s Google account</button></form>';
   if(pendingY?.expires>now()) body+='<h3>Confirm your channel</h3><p>'+escape(pendingY.name)+' '+escape(pendingY.handle)+'</p><p><a href="https://www.youtube.com/channel/'+escape(pendingY.id)+'">View this channel</a></p>'+(pendingY.grant_expires?'<p>This Google grant expires on '+escape(new Date(pendingY.grant_expires*1000).toISOString().slice(0,10))+'. Check your Google app publishing status if this is only seven days away.</p>':'')+'<form method="post" action="/connect/youtube/enable"><label>Upload visibility<select name="visibility"><option value="public">Public</option><option value="unlisted">Unlisted</option><option value="private">Private</option></select></label><button>Enable Telegram-approved uploads to this channel</button></form>';
-  if(env.INSTAGRAM_ENABLED==='false') return setupPage(body+'</section><section><h2>Instagram paused</h2><p>Instagram setup and uploads are paused at your request. Only YouTube uploads can run after Telegram approval.</p></section>',id);
+  if(env.INSTAGRAM_ENABLED==='false') return page(body+'</section><section><h2>Instagram paused</h2><p>Instagram setup and uploads are paused at your request. Only YouTube uploads can run after Telegram approval.</p></section>');
   body+='</section><section><h2>Instagram</h2><p>'+(instagram?'Connected to @'+escape(instagram.name)+'.':'Not connected yet.')+'</p><p>Use an Instagram Creator or Business account linked to a Facebook Page you manage. Your Meta app needs Instagram publishing permissions and your Facebook account must have an app role.</p><p><a href="https://developers.facebook.com/apps/">Open Meta apps</a>. Add Facebook Login for Business and register this valid OAuth redirect URI</p><p><code>'+escape(icallback)+'</code></p><form method="post" action="/connect/instagram/app"><label>Meta app ID<input name="id" inputmode="numeric" required></label><label>Meta app secret<input type="password" name="secret" autocomplete="off" required></label><label>Facebook Login configuration ID, if provided<input name="config_id" inputmode="numeric"></label><button>Save app details securely</button></form>';
   if(app) body+='<p>App details saved. Version '+escape(app.version)+'.</p><form method="post" action="/connect/instagram/start"><button>Connect Instagram through Facebook</button></form>';
   if(pendingI?.expires>now()) body+='<h3>Choose your Instagram account</h3><form method="post" action="/connect/instagram/enable"><label>Account<select name="account">'+pendingI.accounts.map(a=>'<option value="'+escape(a.id)+'">@'+escape(a.name)+' — '+escape(a.page)+'</option>').join('')+'</select></label><button>Enable Telegram-approved Reels for this account</button></form>';
-  return setupPage(body+'</section><p class="note">This private setup session lasts one hour. Enter credentials only on this page or on Google and Meta’s official pages.</p>',id);
-}
-function setupPage(body,csrf){
-  return page(body.replace(/(<form\b[^>]*>)/g,'$1<input type="hidden" name="csrf" value="'+escape(csrf)+'">'));
-}
-async function postForm(request,env,csrf){
-  const origin=request.headers.get('Origin');
-  if(request.method!=='POST'||(origin&&origin!==new URL(env.WORKER_URL).origin)) throw new Error('Invalid setup request.');
-  if(Number(request.headers.get('Content-Length'))>8000) throw new Error('Invalid form size.');
-  const raw=await request.text();
-  if(raw.length>8000) throw new Error('Invalid form size.');
-  const form=new URLSearchParams(raw);
-  if(!origin&&form.get('csrf')!==csrf) throw new Error('Invalid setup request.');
-  return form;
+  return page(body+'</section><p class="note">This private setup session lasts one hour. Enter credentials only on this page or on Google and Meta’s official pages.</p>');
 }
 export async function connectRoute(request,env){
   try{
@@ -166,10 +153,9 @@ export async function connectRoute(request,env){
     if(link&&request.method==='GET'){
       const saved=await get(env,'social:link:'+await hash(link[1]));
       if(!saved||saved.expires<=now()) throw new Error('This connection link has expired. Request a fresh link.');
-      return setupPage('<p>Open your private publishing-account setup. You will sign in directly with Google or Meta and confirm each account before enabling uploads.</p><form method="post" action="'+escape(path)+'"><button>Open secure setup</button></form>',link[1]);
+      return page('<p>Open your private publishing-account setup. You will sign in directly with Google or Meta and confirm each account before enabling uploads.</p><form method="post" action="'+escape(path)+'"><button>Open secure setup</button></form>');
     }
-    if(link&&request.method==='POST'){
-      await postForm(request,env,link[1]);
+    if(link&&request.method==='POST'&&request.headers.get('Origin')===new URL(env.WORKER_URL).origin){
       await take(env,'social:link:'+await hash(link[1]));
       const token=random();await put(env,'social:session:'+await hash(token),{expires:now()+3600});
       return redirect('/connect',{'Set-Cookie':'reel_connect='+token+'; Path=/connect; Secure; HttpOnly; SameSite=Lax; Max-Age=3600'});
@@ -181,9 +167,12 @@ export async function connectRoute(request,env){
     const [,provider,verb]=action;
     if(provider==='instagram'&&env.INSTAGRAM_ENABLED==='false') return page('<p>Instagram setup and uploads are paused.</p>',409);
     if(verb==='callback'&&request.method==='GET') return await callback(env,request,provider,id);
-    if(request.method!=='POST'||(request.headers.has('Origin')&&request.headers.get('Origin')!==new URL(env.WORKER_URL).origin)) return page('<p>Invalid setup request.</p>',403);
-    const form=await postForm(request,env,id);
+    if(request.method!=='POST'||request.headers.get('Origin')!==new URL(env.WORKER_URL).origin) return page('<p>Invalid setup request.</p>',403);
+    if(Number(request.headers.get('Content-Length'))>8000) return page('<p>Form too large.</p>',413);
     if(verb==='start') return await start(env,provider,id);
+    const raw=await request.text();
+    if(raw.length>8000) return page('<p>Form too large.</p>',413);
+    const form=new URLSearchParams(raw);
     if(provider==='instagram'&&verb==='app'){
       const app={id:form.get('id')?.trim(),secret:form.get('secret')?.trim(),config_id:form.get('config_id')?.trim()||'',version:'v27.0'};
       if(!/^\d+$/.test(app.id||'')||!/^[a-f0-9]{32}$/i.test(app.secret||'')||(app.config_id&&!/^\d+$/.test(app.config_id))) throw new Error('Copy the app ID and app secret exactly from Meta app settings.');
