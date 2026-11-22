@@ -545,17 +545,19 @@ export async function acceptPreview(request, env, claims, id) {
   form.set('chat_id', requireValue(env, 'TELEGRAM_CHAT_ID'));
   const testPreview = id.endsWith('-short-test');
   const immediate = meta.gta && !testPreview;
-  if (immediate) form.set('reply_markup', JSON.stringify({ inline_keyboard: [[
+  const autoPublish = env.GTA_AUTO_PUBLISH === 'true' && Boolean(meta.liveChannel) && !testPreview;
+  if (immediate && !autoPublish) form.set('reply_markup', JSON.stringify({ inline_keyboard: [[
     { text: 'Approve upload', callback_data: 'approve:' + id }, { text: 'Reject', callback_data: 'reject:' + id }
   ]] }));
   if (!immediate && !testPreview) form.set('disable_notification', 'true');
   form.set('caption', testPreview ? 'Shorts delivery test. This preview cannot be published.' :
+    autoPublish ? meta.title + '\nInspection passed. Publishing automatically to '+uploadDestinations(meta,env).map(p=>p==='youtube'?'YouTube':'Instagram').join(' and ')+'.' :
     immediate ? meta.title + '\nInspection passed. Approve this file for '+uploadDestinations(meta,env).map(p=>p==='youtube'?'YouTube':'Instagram').join(' and ')+'.' :
     `${meta.title}\nPreparing your ${meta.cartoon ? meta.short ? 'cartoon Short' : 'cartoon episode' : 'video'} for review. Approval buttons arrive around 9 AM India time.`);
   form.set('video', new Blob([data], { type: 'video/mp4' }), 'preview.mp4');
   const sent = await telegram(env, 'sendVideo', form);
   await env.DB.prepare("UPDATE jobs SET status=?,file_id=?,message_id=?,size=? WHERE id=?")
-    .bind(testPreview ? 'test_sent' : immediate ? 'pending' : 'ready', sent.video.file_id, sent.message_id, size, id).run();
+    .bind(testPreview ? 'test_sent' : autoPublish ? 'approved' : immediate ? 'pending' : 'ready', sent.video.file_id, sent.message_id, size, id).run();
   return json({ received: true });
 }
 
