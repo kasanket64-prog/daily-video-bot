@@ -130,6 +130,8 @@ def process_media(job, policy, history, source, folder, absolute, source_url, sl
             result["screened"] = result.get("screened", 0) + 1
             continue
         slot = slots.pop(0)
+        clipup = policy["user"] not in ("kreekcraft", "kaicenat") or slot % 2 == 0
+        render_policy = {**policy, "logo_asset": "campaign-clipup.webp" if clipup else policy.get("logo_asset")}
         metadata = dict(source_id=job["source_id"], creator=policy["user"], slot=slot, start=absolute+start,
             duration=length, batchDay=job["batchDay"], category="GTA 6 gameplay",
             credit=policy["credit"], source_facts=policy["facts"], sources=[policy["campaign"], source_url],
@@ -142,7 +144,7 @@ def process_media(job, policy, history, source, folder, absolute, source_url, sl
         if reservation.get("skip"):
             continue
         result["stage"] = "render"
-        output = render_live(source, (start, stop), folder, policy, plan)
+        output = render_live(source, (start, stop), folder, render_policy, plan)
         raw, review = inspection(output, length)
         result["stage"] = "inspection"
         approved = post(job, "inspect/" + reservation["id"], review)
