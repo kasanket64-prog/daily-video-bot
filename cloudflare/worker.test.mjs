@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
-import worker, { validateClaims, authenticate, validateMetadata, allowedApproval, parseTrends, prepareJob, uploadsComplete, fitnessTrends, selectFitnessClip, inspectionPassed, acceptPreview } from './worker.mjs';
+import worker, { validateClaims, authenticate, validateMetadata, allowedApproval, parseTrends, prepareJob, uploadsComplete, fitnessTrends, selectFitnessClip, inspectionPassed, acceptPreview, inspectDraft } from './worker.mjs';
 import {liveToken,validateLiveToken,restorePinnedSourceWindows} from './worker.mjs';
 import {validLivePlan,publishDestinations,uploadDestinations} from './worker.mjs';
 
@@ -37,6 +37,54 @@ test('inspector requires every explicit check and never treats missing or string
     assert.equal(inspectionPassed(incomplete), false);
   }
   assert.equal(inspectionPassed(null), false);
+});
+
+test('live clips need separate clear-speech and exceptional-payoff passes',()=>{
+  const base={facts_supported:true,visuals_relevant:true,captions_readable:true,narration_matches:true,hook_clear:true};
+  const live={liveChannel:'reviewed-stream'};
+  assert.equal(inspectionPassed(base),true);
+  assert.equal(inspectionPassed(base,live),false);
+  const strong={...base,voice_clear:true,standout_moment:true};
+  assert.equal(inspectionPassed(strong,live),true);
+  for(const field of ['voice_clear','standout_moment']){
+    for(const value of [false,undefined,'true']) assert.equal(inspectionPassed({...strong,[field]:value},live),false);
+  }
+});
+
+test('an older live inspection is reviewed again and the stronger result is cached',async()=>{
+  const sha256='1'.repeat(64),checks={facts_supported:true,visuals_relevant:true,captions_readable:true,narration_matches:true,hook_clear:true};
+  const meta={slot:1,duration:24,liveChannel:'reviewed-stream',creator:'clix',title:'A surprising escape',source_facts:'Reviewed source facts',sources:['https://example.com'],inspection:{passed:true,sha256,checks}};
+  const job={run_id:'test',status:'generating',expires:Date.now()/1000+600,metadata:JSON.stringify(meta)};
+  const DB={prepare(){return {bind(...values){return {async first(){return job;},async run(){job.metadata=values[0];return {meta:{changes:1}};}};}};}};
+  const old=globalThis.fetch;let reviews=0;
+  globalThis.fetch=async(url,init)=>{
+    reviews++;
+    assert.match(url,/generativelanguage.googleapis.com/);
+    const prompt=JSON.parse(init.body).contents[0].parts[0].text;
+    assert.match(prompt,/voice_clear/);assert.match(prompt,/standout_moment/);
+    return Response.json({candidates:[{content:{parts:[{text:JSON.stringify({...checks,voice_clear:true,standout_moment:true,reason:'Clear spoken reaction and a surprising escape payoff'})}]}}]});
+  };
+  const request=()=>new Request('https://example.com/live/inspect/test',{method:'POST',body:JSON.stringify({sha256,duration:24,frames:Array(6).fill('a'.repeat(104)),audio:'a'.repeat(104)})});
+  try{
+    for(let attempt=0;attempt<2;attempt++) assert.deepEqual(await (await inspectDraft(request(),{DB,GEMINI_API_KEY:'test'},{run_id:'test'},'test')).json(),{passed:true});
+    assert.equal(reviews,1);
+    assert.equal(JSON.parse(job.metadata).inspection.checks.voice_clear,true);
+    assert.equal(JSON.parse(job.metadata).inspection.checks.standout_moment,true);
+  }finally{globalThis.fetch=old;}
+});
+
+test('a live preview cannot use an older or failed voice/payoff inspection',async()=>{
+  const data=new TextEncoder().encode('inspected live video');
+  const sha256=Buffer.from(await crypto.subtle.digest('SHA-256',data)).toString('hex');
+  const base={facts_supported:true,visuals_relevant:true,captions_readable:true,narration_matches:true,hook_clear:true};
+  let writes=0;
+  for(const checks of [base,{...base,voice_clear:false,standout_moment:true},{...base,voice_clear:true,standout_moment:false}]){
+    const job={run_id:'test',status:'generating',expires:Date.now()/1000+600,metadata:JSON.stringify({liveChannel:'reviewed-stream',inspection:{passed:true,sha256,checks}})};
+    const DB={prepare(){return {bind(){return {async first(){return job;},async run(){writes++;}};}};}};
+    const request=new Request('https://example.com/live/preview/test',{method:'POST',headers:{'Content-Length':String(data.length)},body:data});
+    assert.equal((await acceptPreview(request,{DB},{run_id:'test'},'test')).status,409);
+  }
+  assert.equal(writes,0);
 });
 
 test('a reviewed Clix live clip keeps Clix source attribution and rejects other creators', async () => {
@@ -149,7 +197,8 @@ for (const live of [false, true]) test('GTA preview sends once with correct appr
   const data = new TextEncoder().encode('inspected video');
   const sha256 = Buffer.from(await crypto.subtle.digest('SHA-256', data)).toString('hex');
   const job = { run_id: '1', status: 'generating', expires: Date.now() / 1000 + 1000,
-    metadata: JSON.stringify({ gta: true, title: "GTA VI", inspection: { passed: true, sha256 } }) };
+    metadata: JSON.stringify({ gta: true, title: "GTA VI", ...(live?{liveChannel:'reviewed-stream'}:{}), inspection: { passed: true, sha256,
+      checks:{facts_supported:true,visuals_relevant:true,captions_readable:true,narration_matches:true,hook_clear:true,voice_clear:true,standout_moment:true} } }) };
   const DB = { prepare(sql) { return { bind(...values) { return {
     async first() { return job; },
     async run() {
