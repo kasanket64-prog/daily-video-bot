@@ -637,38 +637,48 @@ async function media(env, job) {
   return response;
 }
 
+async function reservePublishGap(env,platform) {
+  const now = Math.floor(Date.now()/1000);
+  const key = `publish-gap:${platform}`;
+  if (!await env.DB.prepare('SELECT value FROM settings WHERE name=?').bind(key).first()) {
+    let next = now;
+    if (platform === 'youtube') {
+      const legacy = await env.DB.prepare("SELECT CAST(value AS INTEGER) AS at FROM settings WHERE name='youtube:gta:next'").first();
+      if (legacy?.at > now) next = Math.max(now,legacy.at-43200+300);
+    }
+    await env.DB.prepare('INSERT OR IGNORE INTO settings(name,value) VALUES(?,?)').bind(key,String(next)).run();
+  }
+  const until = now + 1200;
+  const claimed = await env.DB.prepare('UPDATE settings SET value=? WHERE name=? AND CAST(value AS INTEGER)<=?')
+    .bind(String(until),key,now).run();
+  return claimed.meta.changes ? {key,now,until} : null;
+}
+
+async function releasePublishGap(env,slot) {
+  await env.DB.prepare('UPDATE settings SET value=? WHERE name=? AND CAST(value AS INTEGER)=?')
+    .bind(String(slot.now),slot.key,slot.until).run();
+}
+
+async function completePublishGap(env,slot) {
+  await env.DB.prepare('UPDATE settings SET value=? WHERE name=? AND CAST(value AS INTEGER)=?')
+    .bind(String(Math.floor(Date.now()/1000)+300),slot.key,slot.until).run();
+}
+
 async function publishYouTube(env, job, meta) {
   if (meta.destinations && !meta.destinations.includes('youtube')) return;
   if (!env.YOUTUBE_REFRESH_TOKEN || !env.YOUTUBE_CLIENT_ID || !env.YOUTUBE_CLIENT_SECRET || job.youtube_state) return;
-  const pacedGta = Boolean(meta.gta || meta.liveChannel);
-  const now = Math.floor(Date.now() / 1000);
-  if (pacedGta) {
-    const next = await env.DB.prepare("SELECT CAST(value AS INTEGER) AS at FROM settings WHERE name='youtube:gta:next'").first();
-    if (next?.at > now) {
-      const notice = await env.DB.prepare('INSERT OR IGNORE INTO settings(name,value) VALUES(?,?)')
-        .bind('youtube:pace-notice:' + job.id, 'sent').run();
-      if (notice.meta.changes) await message(env, `Your approval for ${job.id} is saved. To avoid another upload burst, GTA Shorts are spaced about 12 hours apart; this clip stays queued for the next slot.`);
-      return;
-    }
+  const privacy = meta.campaign_url ? 'public' : env.YOUTUBE_PRIVACY || 'private';
+  if (!['private', 'unlisted', 'public'].includes(privacy)) throw new Error('Invalid privacy');
+  const slot = await reservePublishGap(env,'youtube');
+  if (!slot) return;
+  const reserve = await env.DB.prepare("UPDATE jobs SET youtube_state='started' WHERE id=? AND status='approved' AND youtube_state IS NULL").bind(job.id).run();
+  if (!reserve.meta.changes) {
+    await releasePublishGap(env,slot);
+    return;
   }
   const token = await api('https://oauth2.googleapis.com/token', { method: 'POST', body: new URLSearchParams({
     client_id: env.YOUTUBE_CLIENT_ID, client_secret: env.YOUTUBE_CLIENT_SECRET, refresh_token: env.YOUTUBE_REFRESH_TOKEN, grant_type: 'refresh_token' }) });
-  const privacy = meta.campaign_url ? 'public' : env.YOUTUBE_PRIVACY || 'private';
-  if (!['private', 'unlisted', 'public'].includes(privacy)) throw new Error('Invalid privacy');
   const auth = { Authorization: 'Bearer ' + token.access_token };
-  const reserve = await env.DB.prepare("UPDATE jobs SET youtube_state='started' WHERE id=? AND status='approved' AND youtube_state IS NULL").bind(job.id).run();
-  if (!reserve.meta.changes) return;
-  if (pacedGta) {
-    const pace = await env.DB.prepare("INSERT INTO settings(name,value) VALUES('youtube:gta:next',?) ON CONFLICT(name) DO UPDATE SET value=excluded.value WHERE CAST(settings.value AS INTEGER)<=?")
-      .bind(now + 43200, now).run();
-    if (!pace.meta.changes) {
-      await env.DB.prepare("UPDATE jobs SET youtube_state=NULL WHERE id=? AND status='approved' AND youtube_state='started'").bind(job.id).run();
-      const notice = await env.DB.prepare('INSERT OR IGNORE INTO settings(name,value) VALUES(?,?)')
-        .bind('youtube:pace-notice:' + job.id, 'sent').run();
-      if (notice.meta.changes) await message(env, `Your approval for ${job.id} is saved. To avoid another upload burst, GTA Shorts are spaced about 12 hours apart; this clip stays queued for the next slot.`);
-      return;
-    }
-  }
   const session = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status', {
     method: 'POST', redirect: 'manual', headers: { ...auth, 'Content-Type': 'application/json', 'X-Upload-Content-Type': 'video/mp4', 'X-Upload-Content-Length': String(job.size) },
     body: JSON.stringify({ snippet: { title: meta.title, description: meta.description, categoryId: meta.cartoon ? '1' : '22', defaultLanguage: meta.language }, status: { privacyStatus: privacy, selfDeclaredMadeForKids: meta.made_for_kids === true } }) });
@@ -678,6 +688,7 @@ async function publishYouTube(env, job, meta) {
   const video = await media(env, job);
   const uploaded = await api(location.toString(), { method: 'PUT', headers: { ...auth, 'Content-Type': 'video/mp4' }, body: video.body });
   await env.DB.prepare("UPDATE jobs SET youtube_state='uploaded',youtube_id=? WHERE id=?").bind(uploaded.id, job.id).run();
+  await completePublishGap(env,slot);
   if (!meta.campaign_url) await message(env, `YouTube upload completed (${privacy}): ${uploaded.id}`);
 }
 
@@ -703,10 +714,16 @@ async function publishInstagram(env, job, meta) {
     if (['ERROR', 'EXPIRED'].includes(status.status_code)) throw new Error('Instagram processing failed');
     return;
   }
+  const slot = await reservePublishGap(env,'instagram');
+  if (!slot) return;
   const reserved = await env.DB.prepare("UPDATE jobs SET instagram_state='publishing' WHERE id=? AND status='approved' AND instagram_state='processing'").bind(job.id).run();
-  if (!reserved.meta.changes) return;
+  if (!reserved.meta.changes) {
+    await releasePublishGap(env,slot);
+    return;
+  }
   const result = await api(`${base}${env.INSTAGRAM_USER_ID}/media_publish`, { method: 'POST', headers, body: new URLSearchParams({ creation_id: job.instagram_id }) });
   await env.DB.prepare("UPDATE jobs SET instagram_state='uploaded',instagram_id=? WHERE id=?").bind(result.id, job.id).run();
+  await completePublishGap(env,slot);
   if (!meta.campaign_url) await message(env, `Instagram upload completed: ${result.id}`);
 }
 
