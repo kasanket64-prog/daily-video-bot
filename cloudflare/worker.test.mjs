@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {DatabaseSync} from 'node:sqlite';
 import worker, { validateClaims, authenticate, validateMetadata, allowedApproval, parseTrends, prepareJob, uploadsComplete, fitnessTrends, selectFitnessClip, inspectionPassed, acceptPreview } from './worker.mjs';
 import {liveToken,validateLiveToken,restorePinnedSourceWindows} from './worker.mjs';
 import {validLivePlan,publishDestinations,uploadDestinations} from './worker.mjs';
@@ -223,6 +224,29 @@ test('pausing Instagram excludes it from existing approvals and never calls Meta
   const old=globalThis.fetch;
   globalThis.fetch=async()=>{assert.fail('Paused Instagram must make no requests');};
   try{await publishDestinations(env,job,meta);}finally{globalThis.fetch=old;}
+});
+
+test('later live approvals finish even when more than five earlier clips await approval',async()=>{
+  const db=new DatabaseSync(':memory:');
+  db.exec('CREATE TABLE jobs(id TEXT PRIMARY KEY,status TEXT,metadata TEXT,expires INTEGER,youtube_state TEXT,instagram_state TEXT)');
+  const metadata=JSON.stringify({liveChannel:'test-channel',destinations:['youtube','instagram']});
+  const insert=db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,NULL)');
+  for(let i=0;i<9;i++) insert.run(String(i),i<7?'pending':'approved',metadata,Math.floor(Date.now()/1000)+3600,i<7?null:'uploaded');
+  const DB={prepare(sql){const statement=db.prepare(sql);return {bind(...args){return {
+    async first(){return statement.get(...args)||null;},
+    async all(){return {results:statement.all(...args)};},
+    async run(){return {meta:{changes:Number(statement.run(...args).changes)}};}
+  };}};}};
+  const env={DB,GTA_REELS_ENABLED:'true',SHORT_PREVIEW_TEST:'true',LIVE_WATCH_ENABLED:'true',LIVE_CHANNEL_ID:'test-channel',
+    YOUTUBE_CLIENT_ID:'test-client',YOUTUBE_CLIENT_SECRET:'test-secret',YOUTUBE_REFRESH_TOKEN:'test-refresh',
+    INSTAGRAM_ENABLED:'false',TELEGRAM_BOT_TOKEN:'test',TELEGRAM_WEBHOOK_SECRET:'test',WORKER_URL:'https://bot.example.com'};
+  const old=globalThis.fetch;
+  globalThis.fetch=async url=>{assert.equal(url,'https://api.telegram.org/bottest/getWebhookInfo');return Response.json({ok:true,result:{url:env.WORKER_URL+'/telegram'}});};
+  try{
+    let task;await worker.scheduled(null,env,{waitUntil(promise){task=promise;}});await task;
+    assert.equal(db.prepare("SELECT count(*) AS count FROM jobs WHERE status='published'").get().count,2);
+    assert.equal(db.prepare("SELECT count(*) AS count FROM jobs WHERE status='pending'").get().count,7);
+  }finally{globalThis.fetch=old;db.close();}
 });
 
 test('stock rate limiting produces an original-background job without hammering the stock API', async () => {

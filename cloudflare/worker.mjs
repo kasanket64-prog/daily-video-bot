@@ -648,7 +648,7 @@ async function tick(env) {
   const info = await telegram(env, 'getWebhookInfo', {});
   if (info.url !== env.WORKER_URL + '/telegram') await telegram(env, 'setWebhook', {
     url: env.WORKER_URL + '/telegram', secret_token: env.TELEGRAM_WEBHOOK_SECRET, allowed_updates: ['callback_query'] });
-  const liveJobs = preview && env.LIVE_WATCH_ENABLED === 'true' ? (await env.DB.prepare("SELECT * FROM jobs WHERE json_extract(metadata,'$.liveChannel')=? AND status IN ('pending','approved') LIMIT 5").bind(env.LIVE_CHANNEL_ID).all()).results : [];
+  const liveJobs = preview && env.LIVE_WATCH_ENABLED === 'true' ? (await env.DB.prepare("SELECT * FROM jobs WHERE json_extract(metadata,'$.liveChannel')=? AND status IN ('pending','approved') ORDER BY CASE WHEN status='approved' THEN 0 WHEN expires<=unixepoch() THEN 1 ELSE 2 END, expires, id LIMIT 5").bind(env.LIVE_CHANNEL_ID).all()).results : [];
   const jobs = preview ? [...(await Promise.all(reviews.map(reel => row(env, reel.id)))).filter(j => j && ['pending','approved'].includes(j.status)), ...liveJobs] : (await env.DB.prepare("SELECT * FROM jobs WHERE status IN ('ready','pending','approved') AND coalesce(json_extract(metadata,'$.gta'),0)=? AND ((coalesce(json_extract(metadata,'$.cartoon'),0)=1 AND ?=1) OR (coalesce(json_extract(metadata,'$.cartoon'),0)=0 AND ?=1)) AND (status != 'pending' OR expires <= unixepoch()) ORDER BY CASE WHEN expires <= unixepoch() THEN 0 WHEN status='ready' THEN 1 ELSE 2 END, ((rowid + unixepoch()/300) % 101), id LIMIT 5")
     .bind(Number(gta), Number(cartoonsEnabled), Number(gta || env.AUTOMATION_ENABLED === 'true')).all()).results;
   for (const job of jobs) {
