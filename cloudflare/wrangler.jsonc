@@ -18,5 +18,5 @@
     "YOUTUBE_PRIVACY": "public"
   },
   "d1_databases": [{ "binding": "DB", "database_name": "daily-video-bot", "database_id": "85017e14-d90a-4243-8b70-8f6d7e133b6a" }],
-  "triggers": { "crons": ["*/5 * * * *"] }
+  "triggers": { "crons": ["* * * * *"] }
 }

@@ -761,6 +761,8 @@ function campaignSubmissionText(entry) {
   for (const post of posts) {
     const label = post.platform === 'youtube' ? 'YouTube' : 'Instagram';
     const deadline = new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Kolkata'}).format(new Date(post.deadline_at));
+    if (post.status === 'pending' && post.reminder) lines.push(`⏰ ${label}: ${post.reminder}`);
+    if (post.status === 'pending' && post.deadline_passed) lines.push(`⚠️ ${label}: deadline passed; late submission may not qualify.`);
     lines.push(`${post.status === 'submitted' ? '✅ Done' : '⬜ To submit'} — ${label}`,
       `Post URL: ${post.url}`,`Submit by: ${deadline} IST`,'');
   }
@@ -785,18 +787,65 @@ function campaignSubmissionKeyboard(entry) {
 async function showCampaignSubmission(env,entry) {
   const text = campaignSubmissionText(entry);
   const keyboard = campaignSubmissionKeyboard(entry);
+  const keyboardState = JSON.stringify(keyboard || null);
   if (entry.message_id) {
-    await telegram(env,'editMessageCaption',{chat_id:env.TELEGRAM_CHAT_ID,message_id:entry.message_id,caption:text,
-      reply_markup:keyboard || {inline_keyboard:[]}});
+    if (entry.message_caption !== text || entry.message_keyboard !== keyboardState) {
+      await telegram(env,'editMessageCaption',{chat_id:env.TELEGRAM_CHAT_ID,message_id:entry.message_id,caption:text,
+        reply_markup:keyboard || {inline_keyboard:[]}});
+    }
   } else {
     return;
   }
+  entry.message_caption = text;
+  entry.message_keyboard = keyboardState;
   await saveCampaignSubmission(env,entry);
 }
 
 async function saveCampaignSubmission(env,entry) {
   await env.DB.prepare('INSERT INTO settings(name,value) VALUES(?,?) ON CONFLICT(name) DO UPDATE SET value=excluded.value')
     .bind('campaign-checklist:'+entry.id,JSON.stringify(entry)).run();
+  const activeKey = 'campaign-checklists:active';
+  const stored = await env.DB.prepare('SELECT value FROM settings WHERE name=?').bind(activeKey).first();
+  const active = stored ? JSON.parse(stored.value) : [];
+  const needsReminder = Object.values(entry.posts).some(post => post.status === 'pending' && !post.deadline_passed);
+  const next = needsReminder ? [...new Set([...active,entry.id])] : active.filter(id => id !== entry.id);
+  if (next.length !== active.length || next.some((id,index) => id !== active[index])) {
+    await env.DB.prepare('INSERT INTO settings(name,value) VALUES(?,?) ON CONFLICT(name) DO UPDATE SET value=excluded.value')
+      .bind(activeKey,JSON.stringify(next)).run();
+  }
+}
+
+async function remindCampaignSubmissions(env) {
+  if (!env.DB || !env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) return;
+  const stored = await env.DB.prepare("SELECT value FROM settings WHERE name='campaign-checklists:active'").first();
+  const ids = stored ? JSON.parse(stored.value) : [];
+  if (!Array.isArray(ids) || !ids.length) return;
+  const keys = ids.slice(0,100).map(id => 'campaign-checklist:'+id);
+  const rows = await env.DB.prepare(`SELECT name,value FROM settings WHERE name IN (${keys.map(() => '?').join(',')})`).bind(...keys).all();
+  const now = Date.now();
+  for (const row of rows.results || []) {
+    let entry;
+    try { entry = JSON.parse(row.value); } catch { continue; }
+    let changed = false;
+    for (const post of Object.values(entry.posts || {})) {
+      if (post.status !== 'pending') continue;
+      const remaining = Date.parse(post.deadline_at) - now;
+      if (remaining <= 0) {
+        if (!post.deadline_passed) { post.deadline_passed = true; changed = true; }
+        continue;
+      }
+      const sent = new Set(post.reminders_sent || []);
+      const due = [10,5,1].filter(minutes => remaining <= minutes*60000 && !sent.has(minutes));
+      if (due.length) {
+        for (const minutes of due) sent.add(minutes);
+        post.reminders_sent = [...sent].sort((a,b) => a-b);
+        const minutesLeft = Math.max(1,Math.ceil(remaining/60000));
+        post.reminder = `${minutesLeft} minute${minutesLeft === 1 ? '' : 's'} left to submit ${post.platform === 'youtube' ? 'YouTube' : 'Instagram'}`;
+        changed = true;
+      }
+    }
+    if (changed) await showCampaignSubmission(env,entry);
+  }
 }
 
 async function tick(env) {
@@ -1197,5 +1246,10 @@ export default {
       return json({ error: 'Operation failed. Check private configuration and free quotas.' }, 503);
     }
   },
-  async scheduled(event, env, context) { context.waitUntil(socialEnv(env).then(connected=>tick(connected))); }
+  async scheduled(event, env, context) {
+    context.waitUntil((async () => {
+      await remindCampaignSubmissions(env);
+      if (new Date(event.scheduledTime).getUTCMinutes() % 5 === 0) await tick(await socialEnv(env));
+    })());
+  }
 };
