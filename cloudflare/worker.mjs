@@ -678,7 +678,7 @@ async function publishYouTube(env, job, meta) {
   const video = await media(env, job);
   const uploaded = await api(location.toString(), { method: 'PUT', headers: { ...auth, 'Content-Type': 'video/mp4' }, body: video.body });
   await env.DB.prepare("UPDATE jobs SET youtube_state='uploaded',youtube_id=? WHERE id=?").bind(uploaded.id, job.id).run();
-  await message(env, `YouTube upload completed (${privacy}): ${uploaded.id}`);
+  if (!meta.campaign_url) await message(env, `YouTube upload completed (${privacy}): ${uploaded.id}`);
 }
 
 async function publishInstagram(env, job, meta) {
@@ -707,7 +707,7 @@ async function publishInstagram(env, job, meta) {
   if (!reserved.meta.changes) return;
   const result = await api(`${base}${env.INSTAGRAM_USER_ID}/media_publish`, { method: 'POST', headers, body: new URLSearchParams({ creation_id: job.instagram_id }) });
   await env.DB.prepare("UPDATE jobs SET instagram_state='uploaded',instagram_id=? WHERE id=?").bind(result.id, job.id).run();
-  await message(env, `Instagram upload completed: ${result.id}`);
+  if (!meta.campaign_url) await message(env, `Instagram upload completed: ${result.id}`);
 }
 
 export async function publishDestinations(env,job,meta) {
@@ -730,7 +730,7 @@ async function notifyCampaignSubmission(env,job,meta) {
   const saved = await env.DB.prepare('SELECT value FROM settings WHERE name=?').bind(key).first();
   const entry = saved ? JSON.parse(saved.value) : {
     id:job.id,title:meta.title,campaign_name:meta.campaign_name || 'Campaign',campaign_url:meta.campaign_url,
-    campaign_caption:meta.campaign_caption || '',campaign_notice:meta.campaign_notice || '',posts:{},message_id:null
+    campaign_caption:meta.campaign_caption || '',campaign_notice:meta.campaign_notice || '',posts:{},message_id:job.message_id
   };
   const addPost = (platform,id,url) => {
     if (!entry.posts[platform]) {
@@ -756,7 +756,7 @@ async function notifyCampaignSubmission(env,job,meta) {
 function campaignSubmissionText(entry) {
   const posts = Object.values(entry.posts);
   const complete = posts.length > 0 && posts.every(post => post.status === 'submitted');
-  const lines = [`Campaign links${complete ? ' — all marked done ✅' : ''}`,`Video: ${entry.title || entry.id}`,
+  const lines = [`${entry.title || entry.id}${complete ? ' — all submitted ✅' : ''}`,
     `Campaign: ${entry.campaign_name}`,`Submit here: ${entry.campaign_url}`,''];
   for (const post of posts) {
     const label = post.platform === 'youtube' ? 'YouTube' : 'Instagram';
@@ -764,19 +764,20 @@ function campaignSubmissionText(entry) {
     lines.push(`${post.status === 'submitted' ? '✅ Done' : '⬜ To submit'} — ${label}`,
       `Post URL: ${post.url}`,`Submit by: ${deadline} IST`,'');
   }
-  if (entry.campaign_caption) lines.push(`Required caption: ${entry.campaign_caption}`);
-  if (entry.campaign_notice) lines.push(entry.campaign_notice);
-  if (!complete) lines.push('Submit each post on the campaign page, then tap its button below.');
-  return lines.join('\n').trim();
+  if (!complete) lines.push('Submit each link on the campaign page, then tap its button below.');
+  const required = [entry.campaign_caption && `Required caption: ${entry.campaign_caption}`,entry.campaign_notice].filter(Boolean).join('\n');
+  const base = lines.join('\n').trim();
+  const room = Math.max(0,1024-[...base].length-2);
+  return required ? `${base}\n\n${[...required].slice(0,room).join('')}` : base;
 }
 
 function campaignSubmissionKeyboard(entry) {
   const rows = [];
   if (entry.campaign_url) rows.push([{text:'Open campaign page',url:entry.campaign_url}]);
   for (const post of Object.values(entry.posts)) {
-    if (post.status === 'submitted') continue;
     const label = post.platform === 'youtube' ? 'YouTube' : 'Instagram';
-    rows.push([{text:`✓ Mark ${label} submitted`,callback_data:`campaign-done:${entry.id}:${post.platform}`}]);
+    rows.push([{text:`Open ${label} post`,url:post.url}, ...(post.status === 'submitted' ? [] :
+      [{text:`✓ Mark ${label} submitted`,callback_data:`campaign-done:${entry.id}:${post.platform}`}])]);
   }
   return rows.length ? {inline_keyboard:rows} : undefined;
 }
@@ -785,11 +786,10 @@ async function showCampaignSubmission(env,entry) {
   const text = campaignSubmissionText(entry);
   const keyboard = campaignSubmissionKeyboard(entry);
   if (entry.message_id) {
-    await telegram(env,'editMessageText',{chat_id:env.TELEGRAM_CHAT_ID,message_id:entry.message_id,text,
+    await telegram(env,'editMessageCaption',{chat_id:env.TELEGRAM_CHAT_ID,message_id:entry.message_id,caption:text,
       reply_markup:keyboard || {inline_keyboard:[]}});
   } else {
-    const sent = await telegram(env,'sendMessage',{chat_id:env.TELEGRAM_CHAT_ID,text,reply_markup:keyboard});
-    entry.message_id = sent.message_id;
+    return;
   }
   await saveCampaignSubmission(env,entry);
 }
