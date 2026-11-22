@@ -77,6 +77,25 @@ test('issuing a setup link requires a separate unexpired bootstrap credential',a
   env.SOCIAL_SETUP_ADMIN=JSON.stringify({key:'3'.repeat(64),expires:0});
   assert.equal((await connectRoute(request('3'.repeat(64)),env)).status,403);
 });
+
+test('browsers without Origin must present the private form token and cannot use another session',async()=>{
+  const env=environment(),url=await issueConnectLink(env);
+  const html=await (await connectRoute(new Request(url),env)).text();
+  const csrf=/name="csrf" value="([a-f0-9]{64})"/.exec(html)[1];
+  const post=(target,body,cookie)=>new Request(target,{method:'POST',headers:cookie?{Cookie:cookie}:{},body:new URLSearchParams(body)});
+  assert.equal((await connectRoute(post(url,{}),env)).status,400);
+  const opened=await connectRoute(post(url,{csrf}),env);
+  assert.equal(opened.status,303);
+  const cookie=opened.headers.get('Set-Cookie').split(';')[0];
+  const home=await (await connectRoute(new Request(env.WORKER_URL+'/connect',{headers:{Cookie:cookie}}),env)).text();
+  const sessionToken=/name="csrf" value="([a-f0-9]{64})"/.exec(home)[1];
+  const start=env.WORKER_URL+'/connect/youtube/start';
+  assert.equal((await connectRoute(post(start,{},cookie),env)).status,400);
+  assert.equal((await connectRoute(post(start,{csrf},cookie),env)).status,400);
+  assert.equal((await connectRoute(post(start,{csrf:sessionToken},cookie),env)).status,303);
+  const foreign=post(start,{csrf:sessionToken},cookie);foreign.headers.set('Origin','https://attacker.example.com');
+  assert.equal((await connectRoute(foreign,env)).status,403);
+});
 test('YouTube OAuth is session-bound, single-use and needs explicit channel confirmation',async()=>{
   const env=environment(),request=await open(env),other=await open(env);
   const started=await connectRoute(request('/connect/youtube/start',{}),env);
