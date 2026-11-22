@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
+from itertools import islice
 import json
 import math
 import os
@@ -57,9 +58,13 @@ def post(job, route, data, content_type="application/json"):
         error.gateway = "provider"
         if "application/json" in error.headers.get("Content-Type", ""):
             try:
-                label = json.loads(error.read(1000)).get("error")
+                details = json.loads(error.read(1000))
+                label = details.get("error")
                 if label in ("Denied", "Live monitoring disabled"):
                     error.gateway = label
+                if details.get("provider") == "Gemini" and type(details.get("provider_status")) is int and 400 <= details["provider_status"] <= 599:
+                    error.gateway = "Gemini"
+                    error.provider_status = details["provider_status"]
             except (ValueError, UnicodeDecodeError):
                 pass
         raise
@@ -95,110 +100,167 @@ def inspection(path, duration):
     return raw, {"duration": duration, "sha256": hashlib.sha256(raw).hexdigest(), "frames": frames, "audio": audio}
 
 
+def process_media(job, policy, history, source, folder, absolute, source_url, slots, result, deadline):
+    duration = float(probe(source)["format"]["duration"])
+    if duration < 12:
+        return False
+    length = min(24, int(duration))
+    used = [(x["start"], x["start"] + x.get("duration", 24)) for x in history
+            if x.get("source_id") == job["source_id"] and x.get("start") is not None]
+    result["stage"] = "selection"
+    for candidate in neon.rank(source, duration, count=2, length=length):
+        if time.monotonic() >= deadline or not slots:
+            return False
+        start = int(candidate["start"])
+        stop = start + length
+        if (stop > duration or (candidate.get("features", {}).get("motion") or 0) < .015
+                or any(absolute + start < b and a < absolute + stop for a, b in used)):
+            continue
+        result["stage"] = "plan_frames"
+        try:
+            frames, _ = live_evidence(source, start, length, width=640)
+        except subprocess.CalledProcessError:
+            result["damaged_windows"] = result.get("damaged_windows", 0) + 1
+            continue
+        result["stage"] = "plan"
+        recent = [str(x.get("payoff") or x.get("title") or x.get("hook"))[:240]
+                  for x in history[-20:] if x.get("payoff") or x.get("title") or x.get("hook")]
+        plan = post(job, "plan", {"creator": policy["user"], "frames": frames, "recent_events": recent})
+        if plan.get("usable") is not True:
+            result["screened"] = result.get("screened", 0) + 1
+            continue
+        slot = slots.pop(0)
+        metadata = dict(source_id=job["source_id"], creator=policy["user"], slot=slot, start=absolute+start,
+            duration=length, batchDay=job["batchDay"], category="GTA 6 gameplay",
+            credit=policy["credit"], source_facts=policy["facts"], sources=[policy["campaign"], source_url],
+            title=plan["title"], hook=plan["hook"],
+            script="Editorial summary of the source highlight. " + plan["payoff"], clipLanguage="en",
+            analysis=dict(angle=plan["payoff"][:240], audience="GTA VI viewers", story_arc=plan["payoff"][:240],
+                emotion="Surprise", sound_plan="Original synchronized stream commentary and gameplay audio", cta="Watch the outcome"))
+        result["stage"] = "reservation"
+        reservation = post(job, "short", metadata)
+        if reservation.get("skip"):
+            continue
+        result["stage"] = "render"
+        output = render_live(source, (start, stop), folder, policy, plan)
+        raw, review = inspection(output, length)
+        result["stage"] = "inspection"
+        approved = post(job, "inspect/" + reservation["id"], review)
+        used.append((absolute+start, absolute+stop))
+        history.append({**metadata, "id": reservation["id"]})
+        if approved.get("passed") is True:
+            result["stage"] = "delivery"
+            post(job, "preview/" + reservation["id"], raw, "video/mp4")
+            result["delivered"] += 1
+            return True
+        result["held"] += 1
+    return True
+
+
+def capture_media(job, policy, history, media, source_url, slots, result, deadline, *, live):
+    formats = [f for f in media.get("formats", []) if 360 <= (f.get("height") or 0) <= 720]
+    if not formats:
+        return False
+    selected = min(formats, key=lambda f: abs(f["height"] - 480))
+    job["source_id"] = "twitch:" + str(media["id"])
+    with TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        source = folder / "live.mkv"
+        absolute = math.floor(time.time()) - 30 if live else 0
+        result["stage"] = "capture"
+        try:
+            ffmpeg(["-rw_timeout", "15000000", "-protocol_whitelist", "https,tls,tcp,crypto",
+                    "-i", selected["url"], "-t", str(90 if live else min(media["duration"], 90)),
+                    "-fs", "64000000", "-map", "0:v:0", "-map", "0:a:0", "-c", "copy", str(source)], folder)
+        except subprocess.SubprocessError:
+            return False
+        return process_media(job, policy, history, source, folder, absolute, source_url, slots, result, deadline)
+
+
+def recent_clips(client, job, policy, history, seen, result, deadline):
+    result["stage"] = "clip_lookup"
+    try:
+        listing = client.extract_info("https://www.twitch.tv/" + policy["user"] + "/clips?filter=clips&range=24hr", download=False, process=False)
+    except Exception:
+        result["lookup_failures"] = result.get("lookup_failures", 0) + 1
+        return
+    used = {x.get("source_id") for x in history} | seen
+    cutoff = max(datetime(2026, 11, 18, tzinfo=timezone.utc).timestamp(), time.time()-86400)
+    checked = 0
+    for entry in islice(listing.get("entries", []), 20):
+        if time.monotonic() >= deadline or checked >= 2:
+            break
+        clip_id = str(entry.get("id", ""))
+        url = entry.get("url", "")
+        source_id = "twitch:" + clip_id
+        if (not re.fullmatch(r"[0-9]{9,20}", clip_id) or source_id in used
+                or not re.fullmatch(r"https://www\.twitch\.tv/" + policy["user"] + r"/clip/[A-Za-z0-9_-]+", url)):
+            continue
+        checked += 1
+        try:
+            clip = client.extract_info(url, download=False)
+        except Exception:
+            continue
+        eligible = (str(clip.get("id")) == clip_id and str(clip.get("channel_id")) == policy["clips_channel_id"]
+            and isinstance(clip.get("timestamp"), (int, float)) and cutoff <= clip["timestamp"] <= time.time()+300
+            and any(str(c).casefold() in ("grand theft auto vi", "grand theft auto 6", "gta vi", "gta 6") for c in clip.get("categories", []))
+            and isinstance(clip.get("duration"), (int, float)) and 12 <= clip["duration"] <= 90)
+        if eligible:
+            yield clip, url
+        else:
+            post(job, "clip-history", {"creator": policy["user"], "source_id": source_id})
+            seen.add(source_id)
+
+
 def run(job):
     global last_result
     result = {"delivered": 0, "held": 0, "state": "complete", "stage": "lookup"}
     try:
         history = post(job, "short-history", {})
-        used = []
         slots = [n for n in range(1, 41) if not any(x["id"] == job["batchDay"] + f"-g{n:02d}-short" for x in history)]
         if not slots:
             return
         creators = job.get("creators", [])
         if not creators:
             raise ValueError("Missing reviewed creators")
+        seen = set(post(job, "clip-history", {})) if any(p.get("clips_channel_id") for p in creators) else set()
+        # Finish before the signed callback expires, including bounded AI retries.
+        deadline = time.monotonic() + 600
         for policy in creators:
             user = policy.get("user")
-            if user not in ("clix", "kreekcraft", "lacy"):
+            if user not in ("clix", "kreekcraft", "lacy") or time.monotonic() >= deadline:
                 continue
             result["stage"] = "lookup"
-            try:
-                with YoutubeDL({"quiet": True, "logger": Quiet(), "socket_timeout": 10,
-                                "retries": 0, "extractor_retries": 0}) as client:
-                    stream = client.extract_info("https://www.twitch.tv/" + user, download=False)
-            except Exception:
-                continue
-            if (not stream.get("is_live") or stream.get("uploader_id", "").casefold() != user
-                    or not re.search(r"GTA\s*(6|VI)\b", stream.get("description", "") + stream.get("title", ""), re.I)):
-                continue
-            if not re.fullmatch(r"[0-9]{9,20}", str(stream.get("id", ""))):
-                continue
-            job["source_id"] = "twitch:" + str(stream["id"])
-            used = [(x["start"], x["start"] + x.get("duration", 24)) for x in history
-                    if x.get("source_id") == job["source_id"] and x.get("start") is not None]
-            formats = [f for f in stream["formats"] if 360 <= (f.get("height") or 0) <= 720]
-            if not formats:
-                continue
-            selected = min(formats, key=lambda f: abs(f["height"] - 480))
-            with TemporaryDirectory() as tmp:
-                folder = Path(tmp)
-                source = folder / "live.mkv"
-                absolute = math.floor(time.time()) - 30
-                result["stage"] = "capture"
+            with YoutubeDL({"quiet": True, "logger": Quiet(), "socket_timeout": 10,
+                            "retries": 0, "extractor_retries": 0}) as client:
                 try:
-                    ffmpeg(["-rw_timeout", "15000000", "-protocol_whitelist", "https,tls,tcp,crypto",
-                            "-i", selected["url"], "-t", "90", "-fs", "64000000", "-map", "0:v:0",
-                            "-map", "0:a:0", "-c", "copy", str(source)], folder)
-                except subprocess.SubprocessError:
-                    continue
-                duration = float(probe(source)["format"]["duration"])
-                if duration < 24:
-                    continue
-                result["stage"] = "selection"
-                moments = neon.rank(source, duration, count=2, length=24)
-                for candidate in moments:
-                    start = int(candidate["start"])
-                    stop = start + 24
-                    if (stop > duration or (candidate.get("features", {}).get("motion") or 0) < .015
-                            or any(absolute + start < b and a < absolute + stop for a, b in used)):
-                        continue
-                    if not slots:
-                        break
-                    result["stage"] = "plan_frames"
-                    try:
-                        frames,_ = live_evidence(source,start,24,width=640)
-                    except subprocess.CalledProcessError:
-                        result["damaged_windows"] = result.get("damaged_windows",0) + 1
-                        continue
-                    result["stage"] = "plan"
-                    plan = post(job,"plan",{"creator":user,"frames":frames})
-                    if plan.get("usable") is not True:
-                        result["screened"] = result.get("screened",0) + 1
-                        continue
-                    slot = slots.pop(0)
-                    metadata = dict(source_id=job["source_id"], creator=user, slot=slot, start=absolute+start,
-                        duration=24, batchDay=job["batchDay"], category="GTA 6 gameplay",
-                        credit=policy["credit"], source_facts=policy["facts"],
-                        sources=[policy["campaign"], "https://www.twitch.tv/" + user],
-                        title=plan["title"], hook=plan["hook"],
-                        script="Editorial summary of the source highlight. " + plan["payoff"], clipLanguage="en",
-                        analysis=dict(angle=plan["payoff"][:240], audience="GTA VI viewers",
-                        story_arc=plan["payoff"][:240], emotion="Surprise",
-                        sound_plan="Original synchronized stream commentary and gameplay audio", cta="Watch the outcome"))
-                    result["stage"] = "reservation"
-                    reservation = post(job,"short",metadata)
-                    if reservation.get("skip"):
-                        continue
-                    result["stage"] = "render"
-                    output = render_live(source,(start,stop),folder,policy,plan)
-                    raw,review = inspection(output,24)
-                    result["stage"] = "inspection"
-                    approved = post(job,"inspect/"+reservation["id"],review)
-                    used.append((absolute+start,absolute+stop))
-                    if approved.get("passed") is True:
-                        result["stage"] = "delivery"
-                        post(job,"preview/"+reservation["id"],raw,"video/mp4")
-                        result["delivered"] += 1
-                    else:
-                        result["held"] += 1
+                    stream = client.extract_info("https://www.twitch.tv/" + user, download=False)
+                except Exception:
+                    stream = None
+                if (stream and stream.get("is_live") and stream.get("uploader_id", "").casefold() == user
+                        and re.search(r"GTA\s*(6|VI)\b", stream.get("description", "") + stream.get("title", ""), re.I)
+                        and re.fullmatch(r"[0-9]{9,20}", str(stream.get("id", "")))):
+                    capture_media(job, policy, history, stream, "https://www.twitch.tv/" + user, slots, result, deadline, live=True)
                 if result["delivered"] or not slots:
                     break
+                if policy.get("clips_channel_id"):
+                    for clip, url in recent_clips(client, job, policy, history, seen, result, deadline):
+                        complete = capture_media(job, policy, history, clip, url, slots, result, deadline, live=False)
+                        if complete:
+                            post(job, "clip-history", {"creator": user, "source_id": "twitch:" + str(clip["id"])})
+                            seen.add("twitch:" + str(clip["id"]))
+                        if result["delivered"] or not slots:
+                            break
+            if result["delivered"] or not slots:
+                break
     except Exception as error:
         result["state"] = "failed"
         result["error_type"] = type(error).__name__
         if hasattr(error, "code"):
             result["http_status"] = error.code
             result["gateway"] = getattr(error, "gateway", "upstream")
+            if hasattr(error, "provider_status"):
+                result["provider_status"] = error.provider_status
         if isinstance(error, subprocess.CalledProcessError):
             result["returncode"] = error.returncode
             if error.stderr and not any("https://" in str(arg) for arg in error.cmd):
@@ -230,7 +292,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.reply(200 if self.path == "/health" else 404,
-                   {"engine": "NeonClipping", "revision": "3a3da401", "busy": lock.locked(),
+                   {"engine": "NeonClipping", "revision": "ai-recovery-v2", "busy": lock.locked(),
                     "last_result": last_result} if self.path == "/health" else {})
 
     def do_POST(self):
