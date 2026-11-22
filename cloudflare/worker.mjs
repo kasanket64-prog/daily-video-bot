@@ -602,6 +602,17 @@ async function media(env, job) {
 async function publishYouTube(env, job, meta) {
   if (meta.destinations && !meta.destinations.includes('youtube')) return;
   if (!env.YOUTUBE_REFRESH_TOKEN || !env.YOUTUBE_CLIENT_ID || !env.YOUTUBE_CLIENT_SECRET || job.youtube_state) return;
+  const pacedGta = Boolean(meta.gta || meta.liveChannel);
+  const now = Math.floor(Date.now() / 1000);
+  if (pacedGta) {
+    const next = await env.DB.prepare("SELECT CAST(value AS INTEGER) AS at FROM settings WHERE name='youtube:gta:next'").first();
+    if (next?.at > now) {
+      const notice = await env.DB.prepare('INSERT OR IGNORE INTO settings(name,value) VALUES(?,?)')
+        .bind('youtube:pace-notice:' + job.id, 'sent').run();
+      if (notice.meta.changes) await message(env, `Your approval for ${job.id} is saved. To avoid another upload burst, GTA Shorts are spaced about 12 hours apart; this clip stays queued for the next slot.`);
+      return;
+    }
+  }
   const token = await api('https://oauth2.googleapis.com/token', { method: 'POST', body: new URLSearchParams({
     client_id: env.YOUTUBE_CLIENT_ID, client_secret: env.YOUTUBE_CLIENT_SECRET, refresh_token: env.YOUTUBE_REFRESH_TOKEN, grant_type: 'refresh_token' }) });
   const privacy = env.YOUTUBE_PRIVACY || 'private';
@@ -609,8 +620,7 @@ async function publishYouTube(env, job, meta) {
   const auth = { Authorization: 'Bearer ' + token.access_token };
   const reserve = await env.DB.prepare("UPDATE jobs SET youtube_state='started' WHERE id=? AND status='approved' AND youtube_state IS NULL").bind(job.id).run();
   if (!reserve.meta.changes) return;
-  if (meta.gta || meta.liveChannel) {
-    const now = Math.floor(Date.now() / 1000);
+  if (pacedGta) {
     const pace = await env.DB.prepare("INSERT INTO settings(name,value) VALUES('youtube:gta:next',?) ON CONFLICT(name) DO UPDATE SET value=excluded.value WHERE CAST(settings.value AS INTEGER)<=?")
       .bind(now + 43200, now).run();
     if (!pace.meta.changes) {
