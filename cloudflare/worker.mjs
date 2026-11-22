@@ -694,7 +694,7 @@ export async function publishDestinations(env,job,meta) {
 }
 
 async function notifyCampaignSubmission(env,job,meta) {
-  if (!meta.campaign_url || !uploadsComplete(job,env)) return;
+  if (!meta.campaign_url || (job.youtube_state !== 'uploaded' && job.instagram_state !== 'uploaded')) return;
   const key = 'campaign-submission:' + job.id;
   if (await env.DB.prepare('SELECT value FROM settings WHERE name=?').bind(key).first()) return;
   const links = [];
@@ -769,8 +769,8 @@ async function tick(env) {
         }
         await publishDestinations(env,job,meta);
         const latest = await row(env, job.id);
+        await notifyCampaignSubmission(env,latest,meta);
         if (uploadsComplete(latest, env)) {
-          await notifyCampaignSubmission(env,latest,meta);
           await env.DB.prepare("UPDATE jobs SET status='published' WHERE id=?").bind(job.id).run();
         }
       }
