@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import worker, { validateClaims, authenticate, validateMetadata, allowedApproval, parseTrends, prepareJob, uploadsComplete, fitnessTrends, selectFitnessClip, inspectionPassed, acceptPreview } from './worker.mjs';
 import {liveToken,validateLiveToken,restorePinnedSourceWindows} from './worker.mjs';
-import {validLivePlan,publishDestinations} from './worker.mjs';
+import {validLivePlan,publishDestinations,uploadDestinations} from './worker.mjs';
 
 test('live editorial plans require bounded factual text and a visible facecam crop', () => {
   const good={usable:true,standout:true,highlight_type:'escape',title:'The red car gets away',hook:'Watch the red car',payoff:'The car escapes',facecam:{x:0,y:0,w:.25,h:.4}};
@@ -210,6 +210,19 @@ test('YouTube-only approval completes without uploading to an unconfigured Insta
   const instagram = { INSTAGRAM_ACCESS_TOKEN: 'token', INSTAGRAM_USER_ID: '1', META_API_VERSION: 'v1.0' };
   assert.equal(uploadsComplete({ youtube_state: 'uploaded' }, instagram), false);
   assert.equal(uploadsComplete({ youtube_state: 'uploaded', instagram_state: 'uploaded' }, instagram), true);
+});
+
+test('pausing Instagram excludes it from existing approvals and never calls Meta',async()=>{
+  const env={INSTAGRAM_ENABLED:'false',INSTAGRAM_ACCESS_TOKEN:'token',INSTAGRAM_USER_ID:'1',META_API_VERSION:'v27.0'};
+  const meta={destinations:['youtube','instagram']};
+  const job={status:'approved',youtube_state:'uploaded',metadata:JSON.stringify(meta)};
+  assert.deepEqual(uploadDestinations(meta,env),['youtube']);
+  assert.equal(uploadsComplete(job,env),true);
+  assert.equal(uploadsComplete({...job,youtube_state:'started'},env),false);
+  assert.equal(uploadsComplete(job,{...env,INSTAGRAM_ENABLED:'true'}),false);
+  const old=globalThis.fetch;
+  globalThis.fetch=async()=>{assert.fail('Paused Instagram must make no requests');};
+  try{await publishDestinations(env,job,meta);}finally{globalThis.fetch=old;}
 });
 
 test('stock rate limiting produces an original-background job without hammering the stock API', async () => {

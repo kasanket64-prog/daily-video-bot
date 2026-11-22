@@ -3,6 +3,18 @@ import assert from 'node:assert/strict';
 import {saveConnection,readConnection,socialEnv,issueConnectLink,connectRoute} from './connect.mjs';
 import worker from './worker.mjs';
 
+test('public app information works without credentials or account access',async()=>{
+  for(const path of ['/','/privacy','/terms']){
+    const response=await worker.fetch(new Request('https://bot.example.com'+path),{});
+    assert.equal(response.status,200);
+    assert.match(response.headers.get('Content-Type'),/text\/html/);
+    const html=await response.text();
+    assert.match(html,/Daily Video Bot/);
+    assert.ok(html.includes('href="/privacy"'));
+    assert.ok(!html.includes('/connect/youtube/start'));
+  }
+});
+
 function environment(){
   const rows=new Map();
   return {WORKER_URL:'https://bot.example.com',SOCIAL_TOKEN_KEY:'1'.repeat(64),
@@ -134,6 +146,22 @@ test('OAuth provider errors never echo credentials or activate an account',async
     assert.equal(response.status,400);
     assert.ok(!(await response.text()).includes('secret-client'));
     assert.equal(await readConnection(env,'youtube'),null);
+  }finally{globalThis.fetch=old;}
+});
+
+test('paused Instagram hides its setup and blocks all connection actions',async()=>{
+  const env={...environment(),INSTAGRAM_ENABLED:'false'},request=await open(env),old=globalThis.fetch;
+  globalThis.fetch=async()=>{assert.fail('Paused Instagram must not contact Meta');};
+  try{
+    const html=await (await connectRoute(request('/connect'),env)).text();
+    assert.match(html,/Instagram paused/);
+    assert.ok(html.includes('/connect/youtube/start'));
+    assert.ok(!html.includes('/connect/instagram/'));
+    for(const action of ['app','start','enable','callback']){
+      const call=action==='callback'?request('/connect/instagram/callback?code=test'):request('/connect/instagram/'+action,{});
+      assert.equal((await connectRoute(call,env)).status,409);
+    }
+    assert.equal(await readConnection(env,'instagram'),null);
   }finally{globalThis.fetch=old;}
 });
 
