@@ -894,11 +894,14 @@ async function liveRoute(request, env, path) {
         ...input.frames.map(data=>({inlineData:{mimeType:'image/jpeg',data}}))]}],generationConfig:{responseMimeType:'application/json',temperature:0}})
     });
     const plan = aiObject(result)||{usable:false,reason:'AI review did not return a valid decision. This candidate was skipped.'};
+    const validPlan = validLivePlan(plan);
+    const campaignTextValid = policy.user !== 'dylanpage' || !/[\u0900-\u097f]/.test(plan.title + plan.hook + plan.payoff);
     await env.DB.prepare("INSERT OR REPLACE INTO settings(name,value) VALUES(?,?)")
-      .bind('live:plan:'+policy.user,JSON.stringify({at:new Date().toISOString(),creator:policy.user,usable:validLivePlan(plan),
+      .bind('live:plan:'+policy.user,JSON.stringify({at:new Date().toISOString(),creator:policy.user,usable:validPlan && campaignTextValid,
         reason:typeof plan.reason === 'string'?plan.reason.slice(0,500):'Invalid editorial plan'})).run();
     if (plan.usable !== true) return json({usable:false,reason:typeof plan.reason === 'string'?plan.reason.slice(0,300):'No self-contained gameplay event'});
-    if (!validLivePlan(plan)) return json({usable:false,reason:'Invalid editorial plan'});
+    if (!validPlan) return json({usable:false,reason:'Invalid editorial plan'});
+    if (!campaignTextValid) return json({usable:false,reason:'Dylan Page campaign requires English title, hook and payoff text.'});
     return json(plan);
   }
   if (path === '/live/short') {
