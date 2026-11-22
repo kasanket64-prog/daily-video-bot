@@ -8,7 +8,7 @@
   "vars": {
     "AUTOMATION_ENABLED": "false",
     "CARTOON_AUTOMATION_ENABLED": "false",
-    "INSTAGRAM_ENABLED": "false",
+    "INSTAGRAM_ENABLED": "true",
     "GTA_AUTO_PUBLISH": "true",
     "REPOSITORY": "kasanket64-prog/daily-video-bot",
     "REPOSITORY_ID": "1444540860",

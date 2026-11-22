@@ -581,7 +581,17 @@ export function uploadsComplete(job, env) {
 
 async function webhook(request, env, allowedIds) {
   if (!env.TELEGRAM_WEBHOOK_SECRET || request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== env.TELEGRAM_WEBHOOK_SECRET) return json({ error: 'Denied' }, 403);
-  const callback = (await request.json()).callback_query;
+  const update = await request.json();
+  const callback = update.callback_query;
+  const incoming = update.message;
+  if (incoming?.chat?.type === 'private' && /^\/connect(?:@\w+)?(?:\s|$)/i.test(incoming.text || '') && env.SOCIAL_TOKEN_KEY &&
+      String(incoming.from?.id) === String(env.TELEGRAM_USER_ID) && String(incoming.chat?.id) === String(env.TELEGRAM_CHAT_ID)) {
+    const url = await issueConnectLink(env);
+    await telegram(env, 'sendMessage', { chat_id: env.TELEGRAM_CHAT_ID,
+      text: 'Your private account setup link expires in one hour. Confirm the destination account before enabling Telegram-approved uploads.',
+      reply_markup: { inline_keyboard: [[{ text: 'Connect publishing accounts', url }]] } });
+    return json({ok:true});
+  }
   if (!callback) return json({ ok: true });
   if (callback.data === 'connect-accounts' && env.SOCIAL_TOKEN_KEY &&
       String(callback.from?.id) === String(env.TELEGRAM_USER_ID) &&
@@ -879,8 +889,8 @@ async function tick(env) {
   const reviews = gta ? ownerReviews(env) : [];
   if ((preview && !reviews.length && env.LIVE_WATCH_ENABLED !== 'true') || (!gta && env.AUTOMATION_ENABLED !== 'true' && !cartoonsEnabled) || !env.DB || !env.TELEGRAM_BOT_TOKEN || !env.WORKER_URL || !env.TELEGRAM_WEBHOOK_SECRET) return;
   const info = await telegram(env, 'getWebhookInfo', {});
-  if (info.url !== env.WORKER_URL + '/telegram') await telegram(env, 'setWebhook', {
-    url: env.WORKER_URL + '/telegram', secret_token: env.TELEGRAM_WEBHOOK_SECRET, allowed_updates: ['callback_query'] });
+  if (info.url !== env.WORKER_URL + '/telegram' || !info.allowed_updates?.includes('message')) await telegram(env, 'setWebhook', {
+    url: env.WORKER_URL + '/telegram', secret_token: env.TELEGRAM_WEBHOOK_SECRET, allowed_updates: ['callback_query', 'message'] });
   const liveJobs = preview && env.LIVE_WATCH_ENABLED === 'true' ? (await env.DB.prepare("SELECT * FROM jobs WHERE json_extract(metadata,'$.liveChannel')=? AND status IN ('pending','approved') ORDER BY CASE WHEN status='approved' THEN 0 WHEN expires<=unixepoch() THEN 1 ELSE 2 END, expires, id LIMIT 5").bind(env.LIVE_CHANNEL_ID).all()).results : [];
   const jobs = preview ? [...(await Promise.all(reviews.map(reel => row(env, reel.id)))).filter(j => j && ['pending','approved'].includes(j.status)), ...liveJobs] : (await env.DB.prepare("SELECT * FROM jobs WHERE status IN ('ready','pending','approved') AND coalesce(json_extract(metadata,'$.gta'),0)=? AND ((coalesce(json_extract(metadata,'$.cartoon'),0)=1 AND ?=1) OR (coalesce(json_extract(metadata,'$.cartoon'),0)=0 AND ?=1)) AND (status != 'pending' OR expires <= unixepoch()) ORDER BY CASE WHEN expires <= unixepoch() THEN 0 WHEN status='ready' THEN 1 ELSE 2 END, ((rowid + unixepoch()/300) % 101), id LIMIT 5")
     .bind(Number(gta), Number(cartoonsEnabled), Number(gta || env.AUTOMATION_ENABLED === 'true')).all()).results;
