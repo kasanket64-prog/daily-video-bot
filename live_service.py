@@ -125,7 +125,21 @@ def process_media(job, policy, history, source, folder, absolute, source_url, sl
         result["stage"] = "plan"
         recent = [str(x.get("payoff") or x.get("title") or x.get("hook"))[:240]
                   for x in history[-20:] if x.get("payoff") or x.get("title") or x.get("hook")]
-        plan = post(job, "plan", {"creator": policy["user"], "frames": frames, "recent_events": recent})
+        plan = None
+        for attempt in range(2):
+            try:
+                plan = post(job, "plan", {"creator": policy["user"], "frames": frames, "recent_events": recent})
+                break
+            except HTTPError as error:
+                if getattr(error, "gateway", None) != "Gemini" or getattr(error, "provider_status", None) not in (429, 500, 502, 503, 504):
+                    raise
+                if attempt:
+                    result["ai_failures"] = result.get("ai_failures", 0) + 1
+                    break
+                result["ai_retries"] = result.get("ai_retries", 0) + 1
+                time.sleep(2)
+        if plan is None:
+            continue
         if plan.get("usable") is not True:
             result["screened"] = result.get("screened", 0) + 1
             continue
