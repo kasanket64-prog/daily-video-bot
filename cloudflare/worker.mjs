@@ -609,6 +609,18 @@ async function publishYouTube(env, job, meta) {
   const auth = { Authorization: 'Bearer ' + token.access_token };
   const reserve = await env.DB.prepare("UPDATE jobs SET youtube_state='started' WHERE id=? AND status='approved' AND youtube_state IS NULL").bind(job.id).run();
   if (!reserve.meta.changes) return;
+  if (meta.gta || meta.liveChannel) {
+    const now = Math.floor(Date.now() / 1000);
+    const pace = await env.DB.prepare("INSERT INTO settings(name,value) VALUES('youtube:gta:next',?) ON CONFLICT(name) DO UPDATE SET value=excluded.value WHERE CAST(settings.value AS INTEGER)<=?")
+      .bind(now + 43200, now).run();
+    if (!pace.meta.changes) {
+      await env.DB.prepare("UPDATE jobs SET youtube_state=NULL WHERE id=? AND status='approved' AND youtube_state='started'").bind(job.id).run();
+      const notice = await env.DB.prepare('INSERT OR IGNORE INTO settings(name,value) VALUES(?,?)')
+        .bind('youtube:pace-notice:' + job.id, 'sent').run();
+      if (notice.meta.changes) await message(env, `Your approval for ${job.id} is saved. To avoid another upload burst, GTA Shorts are spaced about 12 hours apart; this clip stays queued for the next slot.`);
+      return;
+    }
+  }
   const session = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status', {
     method: 'POST', redirect: 'manual', headers: { ...auth, 'Content-Type': 'application/json', 'X-Upload-Content-Type': 'video/mp4', 'X-Upload-Content-Length': String(job.size) },
     body: JSON.stringify({ snippet: { title: meta.title, description: meta.description, categoryId: meta.cartoon ? '1' : '22', defaultLanguage: meta.language }, status: { privacyStatus: privacy, selfDeclaredMadeForKids: meta.made_for_kids === true } }) });

@@ -232,14 +232,23 @@ def render_live(source, moment, folder, policy, plan, *, ffmpeg="ffmpeg", ffprob
     w, h = video["width"], video["height"]
     box = plan["facecam"]
     x,y,cw,ch = [int(box[key]*size)//2*2 for key,size in (("x",w),("y",h),("w",w),("h",h))]
+    # Keep the source creator in a single panel; crop the gameplay toward the opposite side.
+    game_w, game_h = (min(w, int(h * .9) // 2 * 2), h) if w / h > .9 else (w, min(h, int(w / .9) // 2 * 2))
+    if w / h > .9:
+        game_x = max(0, min(w - game_w, (x + cw if (x + cw / 2) < w / 2 else x - game_w) // 2 * 2))
+        game_y = 0
+    else:
+        game_x = 0
+        game_y = max(0, min(h - game_h, (y + ch if (y + ch / 2) < h / 2 else y - game_h) // 2 * 2))
     layout = (f"[0:v]split[face][game];[face]crop={cw}:{ch}:{x}:{y},"
-              "scale=720:380:force_original_aspect_ratio=decrease,pad=720:380:(ow-iw)/2:(oh-ih)/2,"
-              "setsar=1,pad=720:1280:0:110:color=black[top];"
-              "[game]scale=720:410:force_original_aspect_ratio=decrease,pad=720:410:(ow-iw)/2:(oh-ih)/2,setsar=1[play];"
-              "[top][play]overlay=0:525,drawtext=textfile=credit.txt:expansion=none:"
-              "fontcolor=white:fontsize=28:x=34:y=36,"
-              "drawtext=textfile=hook.txt:expansion=none:fontcolor=white:fontsize=38:x=34:y=990,"
-              "drawtext=textfile=source.txt:expansion=none:fontcolor=white:fontsize=26:x=34:y=1200[out]")
+              "scale=720:300:force_original_aspect_ratio=increase,crop=720:300,setsar=1[portrait];"
+              f"[game]crop={game_w}:{game_h}:{game_x}:{game_y},scale=720:800,setsar=1[play];"
+              "color=c=black:s=720x1280:r=30[canvas];[canvas][portrait]overlay=0:0[withface];"
+              "[withface][play]overlay=0:350,drawtext=textfile=credit.txt:expansion=none:"
+              "fontcolor=white:fontsize=26:x=24:y=312,"
+              "drawtext=textfile=hook.txt:expansion=none:fontcolor=white:fontsize=38:x=(w-text_w)/2:y=370:"
+              "box=1:boxcolor=black@0.65:boxborderw=16:enable='lt(t,2)',"
+              "drawtext=textfile=source.txt:expansion=none:fontcolor=white:fontsize=22:x=24:y=1215[out]")
     (folder / "credit.txt").write_text(policy["credit"], encoding="utf-8")
     (folder / "hook.txt").write_text(plan["hook"], encoding="utf-8")
     (folder / "source.txt").write_text("Watch live: twitch.tv/" + policy["user"], encoding="utf-8")
