@@ -622,7 +622,7 @@ async function publishYouTube(env, job, meta) {
   }
   const token = await api('https://oauth2.googleapis.com/token', { method: 'POST', body: new URLSearchParams({
     client_id: env.YOUTUBE_CLIENT_ID, client_secret: env.YOUTUBE_CLIENT_SECRET, refresh_token: env.YOUTUBE_REFRESH_TOKEN, grant_type: 'refresh_token' }) });
-  const privacy = env.YOUTUBE_PRIVACY || 'private';
+  const privacy = meta.campaign_url ? 'public' : env.YOUTUBE_PRIVACY || 'private';
   if (!['private', 'unlisted', 'public'].includes(privacy)) throw new Error('Invalid privacy');
   const auth = { Authorization: 'Bearer ' + token.access_token };
   const reserve = await env.DB.prepare("UPDATE jobs SET youtube_state='started' WHERE id=? AND status='approved' AND youtube_state IS NULL").bind(job.id).run();
