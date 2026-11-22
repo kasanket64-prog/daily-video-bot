@@ -174,20 +174,20 @@ async function remindCampaignSubmissions(env) {
     .bind(now + 600, now).all();
   for (const entry of due.results) {
     const notice = JSON.parse(entry.value);
-    notice.reminded = true;
-    await env.DB.prepare('UPDATE settings SET value=? WHERE name=? AND value=?')
-      .bind(JSON.stringify(notice), entry.name, entry.value).run();
     const job = await row(env, entry.name.slice('campaign:notice:'.length));
     if (!job || !notice.message_id) continue;
     const meta = JSON.parse(job.metadata || '{}');
     const instagram = await env.DB.prepare('SELECT value FROM settings WHERE name=?').bind('instagram:permalink:' + job.id).first();
     try {
+      notice.reminded = true;
       await telegram(env, 'editMessageText', { chat_id: requireValue(env, 'TELEGRAM_CHAT_ID'),
         message_id: notice.message_id, text: campaignNoticeText(job, meta, notice, instagram?.value),
         reply_markup: { inline_keyboard: [
           [{ text: 'Open campaign', url: notice.campaign_url }],
           [{ text: 'Mark submitted', callback_data: 'campaign-submitted:' + job.id }]
         ] } });
+      await env.DB.prepare('UPDATE settings SET value=? WHERE name=? AND value=?')
+        .bind(JSON.stringify(notice), entry.name, entry.value).run();
     } catch {}
   }
 }
