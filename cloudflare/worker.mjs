@@ -579,88 +579,10 @@ export function uploadsComplete(job, env) {
     (!destinations.includes('instagram') || job.instagram_state === 'uploaded');
 }
 
-function campaignSubmissionText(entry) {
-  const posts = Object.values(entry.posts || {});
-  const complete = posts.length > 0 && posts.every(post => post.status === 'submitted');
-  const lines = [
-    `Campaign submissions${complete ? ' — all marked submitted ✅' : ''}`,
-    `Video: ${entry.title || entry.job_id}`,
-    `Campaign: ${entry.campaign_name}`,
-    `Submit here: ${entry.campaign_url}`,
-    ''
-  ];
-  for (const post of posts) {
-    const label = post.platform === 'youtube' ? 'YouTube' : 'Instagram';
-    const deadline = new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Kolkata'}).format(new Date(post.deadline_at));
-    lines.push(`${post.status === 'submitted' ? '✅ Submitted' : '⬜ Not submitted'} — ${label}`);
-    lines.push(`Post URL: ${post.url}`);
-    lines.push(`Deadline: ${deadline} IST`);
-    lines.push('');
-  }
-  if (entry.campaign_caption) lines.push(`Required caption: ${entry.campaign_caption}`);
-  if (entry.campaign_notice) lines.push(entry.campaign_notice);
-  if (!complete) lines.push('After you submit each post link on the campaign page, tap its “Mark submitted” button below.');
-  return lines.join('\n').trim();
-}
-
-function campaignSubmissionKeyboard(entry) {
-  const rows = [];
-  if (entry.campaign_url) rows.push([{text:'Open campaign submission page',url:entry.campaign_url}]);
-  for (const post of Object.values(entry.posts || {})) {
-    if (post.status === 'submitted') continue;
-    const label = post.platform === 'youtube' ? 'YouTube' : 'Instagram';
-    rows.push([{text:`Mark ${label} submitted`,callback_data:`campaign-done:${entry.job_id}:${post.platform}`}]);
-  }
-  return rows.length ? {inline_keyboard:rows} : undefined;
-}
-
-async function saveCampaignSubmission(env,entry) {
-  await env.DB.prepare('INSERT INTO settings(name,value) VALUES(?,?) ON CONFLICT(name) DO UPDATE SET value=excluded.value')
-    .bind('campaign-submission:video:'+entry.job_id,JSON.stringify(entry)).run();
-}
-
-async function showCampaignSubmission(env,entry) {
-  const text = campaignSubmissionText(entry);
-  const keyboard = campaignSubmissionKeyboard(entry);
-  const keyboardState = JSON.stringify(keyboard || null);
-  if (entry.message_id) {
-    if (entry.message_text === text && entry.message_keyboard === keyboardState) return;
-    await telegram(env,'editMessageText',{chat_id:env.TELEGRAM_CHAT_ID,message_id:entry.message_id,text,reply_markup:keyboard || {inline_keyboard:[]}});
-  } else {
-    const sent = await telegram(env,'sendMessage',{chat_id:env.TELEGRAM_CHAT_ID,text,reply_markup:keyboard});
-    entry.message_id = sent.message_id;
-  }
-  entry.message_text = text;
-  entry.message_keyboard = keyboardState;
-  await saveCampaignSubmission(env,entry);
-}
-
-async function markCampaignPostSubmitted(callback,env) {
-  const match = /^campaign-done:(\d{4}-\d{2}-\d{2}(?:-g\d{2})?(?:-short|-cartoon-(?:episode|short))?):(youtube|instagram)$/.exec(callback.data || '');
-  if (!match || String(callback.from?.id) !== String(env.TELEGRAM_USER_ID) ||
-      String(callback.message?.chat?.id) !== String(env.TELEGRAM_CHAT_ID) || callback.message?.chat?.type !== 'private') return false;
-  const key = 'campaign-submission:video:'+match[1];
-  const record = await env.DB.prepare('SELECT value FROM settings WHERE name=?').bind(key).first();
-  if (!record) return false;
-  const entry = JSON.parse(record.value);
-  const post = entry.posts?.[match[2]];
-  if (!post || entry.message_id !== callback.message?.message_id || post.status === 'submitted') return false;
-  post.status = 'submitted';
-  post.submitted_at = new Date().toISOString();
-  await showCampaignSubmission(env,entry);
-  return true;
-}
-
 async function webhook(request, env, allowedIds) {
   if (!env.TELEGRAM_WEBHOOK_SECRET || request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== env.TELEGRAM_WEBHOOK_SECRET) return json({ error: 'Denied' }, 403);
   const callback = (await request.json()).callback_query;
   if (!callback) return json({ ok: true });
-  if ((callback.data || '').startsWith('campaign-done:')) {
-    let accepted = false;
-    try { accepted = await markCampaignPostSubmitted(callback,env); } catch {}
-    try { await telegram(env,'answerCallbackQuery',{callback_query_id:callback.id,text:accepted?'Submission marked complete.':'Could not mark this submission.'}); } catch {}
-    return json({ok:true});
-  }
   if (callback.data === 'connect-accounts' && env.SOCIAL_TOKEN_KEY &&
       String(callback.from?.id) === String(env.TELEGRAM_USER_ID) &&
       String(callback.message?.chat?.id) === String(env.TELEGRAM_CHAT_ID) && callback.message?.chat?.type === 'private') {
@@ -668,6 +590,31 @@ async function webhook(request, env, allowedIds) {
     await telegram(env,'sendMessage',{chat_id:env.TELEGRAM_CHAT_ID,text:'Your private account setup link expires in one hour. Confirm the destination account before enabling Telegram-approved uploads.',
       reply_markup:{inline_keyboard:[[{text:'Connect publishing accounts',url}]]}});
     await telegram(env,'answerCallbackQuery',{callback_query_id:callback.id,text:'Private setup link sent.'});
+    return json({ok:true});
+  }
+  const campaignMatch = /^campaign-done:([A-Za-z0-9_-]{1,40}):(youtube|instagram)$/.exec(callback.data || '');
+  if (campaignMatch) {
+    const [, id, platform] = campaignMatch;
+    const key = 'campaign-checklist:' + id;
+    let accepted = false;
+    if (String(callback.from?.id) === String(env.TELEGRAM_USER_ID) &&
+        String(callback.message?.chat?.id) === String(env.TELEGRAM_CHAT_ID) && callback.message?.chat?.type === 'private') {
+      const saved = await env.DB.prepare('SELECT value FROM settings WHERE name=?').bind(key).first();
+      if (saved) {
+        const entry = JSON.parse(saved.value);
+        const post = entry.posts?.[platform];
+        if (post && entry.message_id === callback.message?.message_id) {
+          if (post.status === 'pending') {
+            post.status = 'submitted';
+            post.submitted_at = new Date().toISOString();
+            await saveCampaignSubmission(env, entry);
+            accepted = true;
+          }
+          await showCampaignSubmission(env, entry);
+        }
+      }
+    }
+    try { await telegram(env, 'answerCallbackQuery', { callback_query_id: callback.id, text: accepted ? 'Marked submitted.' : 'Already marked or not authorized.' }); } catch {}
     return json({ok:true});
   }
   const match = /^(approve|reject):(\d{4}-\d{2}-\d{2}(?:(?:-g\d{2})?-short|-cartoon-(?:episode|short))?)$/.exec(callback.data || '');
@@ -779,17 +726,20 @@ export async function publishDestinations(env,job,meta) {
 
 async function notifyCampaignSubmission(env,job,meta) {
   if (!meta.campaign_url || (job.youtube_state !== 'uploaded' && job.instagram_state !== 'uploaded')) return;
-  const key = 'campaign-submission:video:'+job.id;
-  const stored = await env.DB.prepare('SELECT value FROM settings WHERE name=?').bind(key).first();
-  const entry = stored ? JSON.parse(stored.value) : {
-    job_id:job.id,title:meta.title,campaign_name:meta.campaign_name || 'Campaign',campaign_url:meta.campaign_url,
+  const key = 'campaign-checklist:' + job.id;
+  const saved = await env.DB.prepare('SELECT value FROM settings WHERE name=?').bind(key).first();
+  const entry = saved ? JSON.parse(saved.value) : {
+    id:job.id,title:meta.title,campaign_name:meta.campaign_name || 'Campaign',campaign_url:meta.campaign_url,
     campaign_caption:meta.campaign_caption || '',campaign_notice:meta.campaign_notice || '',posts:{},message_id:null
   };
-  const publishedAt = new Date().toISOString();
-  if (job.youtube_state === 'uploaded' && job.youtube_id && !entry.posts.youtube) entry.posts.youtube = {
-    platform:'youtube',id:job.youtube_id,url:`https://youtube.com/shorts/${job.youtube_id}`,
-    published_at:publishedAt,deadline_at:new Date(Date.now()+30*60*1000).toISOString(),status:'pending'
+  const addPost = (platform,id,url) => {
+    if (!entry.posts[platform]) {
+      const publishedAt = new Date().toISOString();
+      entry.posts[platform] = {platform,id,url,published_at:publishedAt,
+        deadline_at:new Date(Date.now()+30*60*1000).toISOString(),status:'pending'};
+    }
   };
+  if (job.youtube_state === 'uploaded' && job.youtube_id) addPost('youtube',job.youtube_id,`https://youtube.com/shorts/${job.youtube_id}`);
   if (job.instagram_state === 'uploaded' && job.instagram_id) {
     let url = '';
     try {
@@ -798,13 +748,55 @@ async function notifyCampaignSubmission(env,job,meta) {
       });
       if (typeof media.permalink === 'string' && /^https:\/\/www\.instagram\.com\//.test(media.permalink)) url = media.permalink;
     } catch {}
-    if (url && !entry.posts.instagram) entry.posts.instagram = {
-      platform:'instagram',id:job.instagram_id,url,
-      published_at:publishedAt,deadline_at:new Date(Date.now()+30*60*1000).toISOString(),status:'pending'
-    };
+    if (url) addPost('instagram',job.instagram_id,url);
   }
-  if (!Object.keys(entry.posts).length) return;
-  await showCampaignSubmission(env,entry);
+  if (Object.keys(entry.posts).length) await showCampaignSubmission(env,entry);
+}
+
+function campaignSubmissionText(entry) {
+  const posts = Object.values(entry.posts);
+  const complete = posts.length > 0 && posts.every(post => post.status === 'submitted');
+  const lines = [`Campaign links${complete ? ' — all marked done ✅' : ''}`,`Video: ${entry.title || entry.id}`,
+    `Campaign: ${entry.campaign_name}`,`Submit here: ${entry.campaign_url}`,''];
+  for (const post of posts) {
+    const label = post.platform === 'youtube' ? 'YouTube' : 'Instagram';
+    const deadline = new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Kolkata'}).format(new Date(post.deadline_at));
+    lines.push(`${post.status === 'submitted' ? '✅ Done' : '⬜ To submit'} — ${label}`,
+      `Post URL: ${post.url}`,`Submit by: ${deadline} IST`,'');
+  }
+  if (entry.campaign_caption) lines.push(`Required caption: ${entry.campaign_caption}`);
+  if (entry.campaign_notice) lines.push(entry.campaign_notice);
+  if (!complete) lines.push('Submit each post on the campaign page, then tap its button below.');
+  return lines.join('\n').trim();
+}
+
+function campaignSubmissionKeyboard(entry) {
+  const rows = [];
+  if (entry.campaign_url) rows.push([{text:'Open campaign page',url:entry.campaign_url}]);
+  for (const post of Object.values(entry.posts)) {
+    if (post.status === 'submitted') continue;
+    const label = post.platform === 'youtube' ? 'YouTube' : 'Instagram';
+    rows.push([{text:`✓ Mark ${label} submitted`,callback_data:`campaign-done:${entry.id}:${post.platform}`}]);
+  }
+  return rows.length ? {inline_keyboard:rows} : undefined;
+}
+
+async function showCampaignSubmission(env,entry) {
+  const text = campaignSubmissionText(entry);
+  const keyboard = campaignSubmissionKeyboard(entry);
+  if (entry.message_id) {
+    await telegram(env,'editMessageText',{chat_id:env.TELEGRAM_CHAT_ID,message_id:entry.message_id,text,
+      reply_markup:keyboard || {inline_keyboard:[]}});
+  } else {
+    const sent = await telegram(env,'sendMessage',{chat_id:env.TELEGRAM_CHAT_ID,text,reply_markup:keyboard});
+    entry.message_id = sent.message_id;
+  }
+  await saveCampaignSubmission(env,entry);
+}
+
+async function saveCampaignSubmission(env,entry) {
+  await env.DB.prepare('INSERT INTO settings(name,value) VALUES(?,?) ON CONFLICT(name) DO UPDATE SET value=excluded.value')
+    .bind('campaign-checklist:'+entry.id,JSON.stringify(entry)).run();
 }
 
 async function tick(env) {
