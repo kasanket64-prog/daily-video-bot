@@ -292,7 +292,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.reply(200 if self.path == "/health" else 404,
-                   {"engine": "NeonClipping", "revision": "ai-recovery-v2", "busy": lock.locked(),
+                   {"engine": "NeonClipping", "revision": os.environ.get("RENDER_GIT_COMMIT", "unknown")[:12], "busy": lock.locked(),
                     "last_result": last_result} if self.path == "/health" else {})
 
     def do_POST(self):
