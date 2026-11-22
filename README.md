@@ -1,10 +1,25 @@
-# Daily video bot — credentials stay outside GitHub
+# Daily Video Bot — Owner-Reviewed Short-Form Video Pipeline
+
+## Project at a glance
+
+A prototype workflow for discovering content candidates, preparing short video drafts and requiring owner review before publication. It combines Python tools, GitHub Actions and Cloudflare services; individual stages depend on configuration, permissions, quotas and external services.
+
+| Pipeline stage | Implementation reference | Responsibility |
+| --- | --- | --- |
+| Discover | [Trend scout](trend_scout.py), [content engine](CONTENT_ENGINE.md) | Identify candidates, without assuming reuse rights |
+| Prepare | [Short renderer](short_render.py), [selection logic](short_selection.py) | Build and inspect draft media |
+| Verify | [Content policy and gates](CONTENT_ENGINE.md) | Check factual support, permissions, provenance, safety and quality |
+| Approve and publish | [Workflow files](.github/workflows/), [GTA setup](GTA_SETUP.md) | Require explicit authorized approval and handle failures conservatively |
+
+**Boundaries:** availability of footage is not proof of licensing; generated scripts require factual verification; no guaranteed views, monetization or complete production deployment are claimed. Provider credentials stay outside GitHub.
+
+---
 
 ## Daily GTA 6 Reels
 
 [Set up GTA Reels and run the first Telegram preview](GTA_SETUP.md).
 
-Enable `GTA_REELS_ENABLED=true` in both Cloudflare Worker variables and GitHub Actions repository variables after deploying this branch's Worker and merging the workflow into `main`. The scout runs at 06:07 India time. The cloud runner prepares up to 40 distinct gameplay highlights per India-local day, preserving the streamer�s original audio. Telegram sends each inspected file with its own approval buttons as soon as it is ready. Each approved clip targets YouTube and Instagram. The example YouTube visibility is private. Scheduling and generation depend on free service availability.
+Enable `GTA_REELS_ENABLED=true` in both Cloudflare Worker variables and GitHub Actions repository variables after deploying this branch's Worker and merging the workflow into `main`. The scout runs at 06:07 India time. The cloud runner prepares up to 40 distinct gameplay highlights per India-local day, preserving the streamer’s original audio. Telegram sends each inspected file with its own approval buttons as soon as it is ready. Each approved clip targets YouTube and Instagram. The example YouTube visibility is private. Scheduling and generation depend on free service availability.
 
 Set `CLOUDFLARE_WORKER_URL` in GitHub. Keep provider and social credentials in Cloudflare. For the first preview, set the Worker variable `SHORT_PREVIEW_TEST=true` and manually run **Scout trends for Shorts** on main. The test sends a private preview without publish buttons. Set the test flag to false for daily approvals.
 
@@ -22,13 +37,13 @@ Current direction: original children's cartoons. Both tracks are off by default 
 
 ### Fit-zee quality workflow
 
-One daily job coordinates five roles: Researcher → Writer → Editor → Inspector → owner approval → Publisher. This is one cloud workflow, not multiple daily video generators. A rejected or failed draft is held; it does not trigger a flood of replacement videos.
+One daily job coordinates five roles: Researcher â†’ Writer â†’ Editor â†’ Inspector â†’ owner approval â†’ Publisher. This is one cloud workflow, not multiple daily video generators. A rejected or failed draft is held; it does not trigger a flood of replacement videos.
 
-The Researcher selects from six reviewed beginner fitness topics with CDC, NHS, or NIDDK source facts. These topics rotate, so the current small catalog repeats every six days. Accuracy takes priority over unrelated trending news. The Writer may paraphrase only those facts into a 40–55-word English/Hindi script. Source links appear in Telegram and the upload description.
+The Researcher selects from six reviewed beginner fitness topics with CDC, NHS, or NIDDK source facts. These topics rotate, so the current small catalog repeats every six days. Accuracy takes priority over unrelated trending news. The Writer may paraphrase only those facts into a 40â€“55-word English/Hindi script. Source links appear in Telegram and the upload description.
 
 The Editor uses fitness-tagged stock clips, two-second cuts, language-specific bold Noto fonts, large yellow word captions and the upstream MoneyPrinterTurbo pop animation. A missing-glyph check prevents square-box captions. If suitable stock is unavailable, an original Fit-zee title card replaces unrelated footage. Music is not added in this revision.
 
-The Inspector checks duration (15–32 seconds), portrait dimensions, an audio stream, six sampled frames and the complete audio. Gemini reviews visual relevance, caption readability, narration/script agreement, opening hook, and support by the supplied source facts. Every check must be explicitly true. Quota errors, uncertain checks and malformed results block delivery. A SHA-256 digest binds approval to the inspected file. AI inspection can still miss errors; the human approval remains required. The inspection sends the generated frames and audio to Gemini through Cloudflare; no provider credentials reach GitHub.
+The Inspector checks duration (15â€“32 seconds), portrait dimensions, an audio stream, six sampled frames and the complete audio. Gemini reviews visual relevance, caption readability, narration/script agreement, opening hook, and support by the supplied source facts. Every check must be explicitly true. Quota errors, uncertain checks and malformed results block delivery. A SHA-256 digest binds approval to the inspected file. AI inspection can still miss errors; the human approval remains required. The inspection sends the generated frames and audio to Gemini through Cloudflare; no provider credentials reach GitHub.
 
 The earlier successful preview was a technical test; it did not meet the new creative standard. The revised workflow still needs a successful live inspection test.
 
@@ -78,7 +93,7 @@ Cloudflare ordinary Variables: WORKER_URL (same origin), REPOSITORY, REPOSITORY_
 1. Stay on Workers Free; no paid upgrade, domain purchase, R2 bucket or paid service is needed.
 2. Create a Worker named daily-video-approvals. Deploy cloudflare/worker.mjs as its module source. Initially leave AUTOMATION_ENABLED=false. GET /health should return an enabled:false response, with no credentials.
 3. Create a free D1 database named daily-video-bot. In its SQL console execute cloudflare/schema.sql. Bind it to the Worker with binding name DB. The example wrangler configuration uses a placeholder database ID; replace that ID only if deploying with Wrangler.
-4. In Worker Settings → Variables and Secrets, add the account values above as Secrets. You must enter private tokens yourself; do not send them in chat or put them on GitHub.
+4. In Worker Settings â†’ Variables and Secrets, add the account values above as Secrets. You must enter private tokens yourself; do not send them in chat or put them on GitHub.
 5. Set the nonsecret variables from the example config, including WORKER_URL. Keep paid Gemini billing disabled; use a model offered by your account's free tier. Pixabay is used because new Pexels API-key issuance is currently paused.
 6. Add a Cron Trigger: */5 * * * *. Cron syntax is UTC. The code converts to India time before sending the daily notification.
 7. Set AUTOMATION_ENABLED=true in Cloudflare only when ready to test. The first cron verifies the Telegram webhook and configures it with its secret header. This dedicated bot must not be used simultaneously by another webhook or polling app.
