@@ -16,7 +16,9 @@ function environment(){
     };}};}}};
 }
 async function open(env){
-  const response=await connectRoute(new Request(await issueConnectLink(env)),env);
+  const url=await issueConnectLink(env);
+  assert.equal((await connectRoute(new Request(url),env)).status,200);
+  const response=await connectRoute(new Request(url,{method:'POST',headers:{Origin:env.WORKER_URL}}),env);
   assert.equal(response.status,303);
   const cookie=response.headers.get('Set-Cookie').split(';')[0];
   return (path,body)=>new Request(env.WORKER_URL+path,{method:body===undefined?'GET':'POST',
@@ -36,7 +38,9 @@ test('social credentials are encrypted, bound to their record name and preferred
 test('private setup links are single-use and expired links and cross-origin forms are denied',async()=>{
   const env=environment(),url=await issueConnectLink(env);
   assert.equal((await connectRoute(new Request(env.WORKER_URL+'/connect'),env)).status,400);
-  const first=await connectRoute(new Request(url),env);
+  assert.equal((await connectRoute(new Request(url),env)).status,200);
+  assert.equal((await connectRoute(new Request(url),env)).status,200);
+  const first=await connectRoute(new Request(url,{method:'POST',headers:{Origin:env.WORKER_URL}}),env);
   assert.match(first.headers.get('Set-Cookie'),/Secure; HttpOnly; SameSite=Lax/);
   assert.equal((await connectRoute(new Request(url),env)).status,400);
   const request=await open(env);

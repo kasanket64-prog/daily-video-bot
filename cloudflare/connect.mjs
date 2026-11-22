@@ -142,6 +142,11 @@ export async function connectRoute(request,env){
     }
     const link=/^\/connect\/([a-f0-9]{64})$/.exec(path);
     if(link&&request.method==='GET'){
+      const saved=await get(env,'social:link:'+await hash(link[1]));
+      if(!saved||saved.expires<=now()) throw new Error('This connection link has expired. Request a fresh link.');
+      return page('<p>Open your private publishing-account setup. You will sign in directly with Google or Meta and confirm each account before enabling uploads.</p><form method="post" action="'+escape(path)+'"><button>Open secure setup</button></form>');
+    }
+    if(link&&request.method==='POST'&&request.headers.get('Origin')===new URL(env.WORKER_URL).origin){
       await take(env,'social:link:'+await hash(link[1]));
       const token=random();await put(env,'social:session:'+await hash(token),{expires:now()+3600});
       return redirect('/connect',{'Set-Cookie':'reel_connect='+token+'; Path=/connect; Secure; HttpOnly; SameSite=Lax; Max-Age=3600'});
