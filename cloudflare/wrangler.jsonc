@@ -9,6 +9,7 @@
     "AUTOMATION_ENABLED": "false",
     "CARTOON_AUTOMATION_ENABLED": "false",
     "INSTAGRAM_ENABLED": "false",
+    "GTA_AUTO_PUBLISH": "true",
     "REPOSITORY": "kasanket64-prog/daily-video-bot",
     "REPOSITORY_ID": "1444540860",
     "OWNER_ID": "232636360",
@@ -17,5 +18,5 @@
     "YOUTUBE_PRIVACY": "public"
   },
   "d1_databases": [{ "binding": "DB", "database_name": "daily-video-bot", "database_id": "85017e14-d90a-4243-8b70-8f6d7e133b6a" }],
-  "triggers": { "crons": ["*/5 * * * *"] }
+  "triggers": { "crons": ["* * * * *"] }
 }

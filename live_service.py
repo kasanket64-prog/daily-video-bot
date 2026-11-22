@@ -125,14 +125,22 @@ def process_media(job, policy, history, source, folder, absolute, source_url, sl
         result["stage"] = "plan"
         recent = [str(x.get("payoff") or x.get("title") or x.get("hook"))[:240]
                   for x in history[-20:] if x.get("payoff") or x.get("title") or x.get("hook")]
-        plan = post(job, "plan", {"creator": policy["user"], "frames": frames, "recent_events": recent})
+        slot = slots[0]
+        clipup = policy["user"] not in ("kreekcraft", "kaicenat", "dylanpage") or slot % 2 == 0
+        campaign_name = "ClipUp" if clipup else policy["name"]
+        plan = post(job, "plan", {"creator": policy["user"], "campaign": campaign_name,
+                                  "slot": slot, "frames": frames, "recent_events": recent})
         if plan.get("usable") is not True:
             result["screened"] = result.get("screened", 0) + 1
             continue
         slot = slots.pop(0)
+        render_policy = {**policy, "campaign": "clipup" if clipup else policy["user"],
+            "logo_asset": "campaign-clipup.webp" if clipup else policy.get("logo_asset"),
+            "source_url": source_url,
+            "no_added_branding": policy["user"] == "dylanpage" and not clipup}
         metadata = dict(source_id=job["source_id"], creator=policy["user"], slot=slot, start=absolute+start,
             duration=length, batchDay=job["batchDay"], category="GTA 6 gameplay",
-            credit=policy["credit"], source_facts=policy["facts"], sources=[policy["campaign"], source_url],
+            credit=policy["credit"], source_facts=policy["facts"], sources=[source_url],
             title=plan["title"], hook=plan["hook"],
             script="Editorial summary of the source highlight. " + plan["payoff"], clipLanguage="en",
             analysis=dict(angle=plan["payoff"][:240], audience="GTA VI viewers", story_arc=plan["payoff"][:240],
@@ -142,7 +150,7 @@ def process_media(job, policy, history, source, folder, absolute, source_url, sl
         if reservation.get("skip"):
             continue
         result["stage"] = "render"
-        output = render_live(source, (start, stop), folder, policy, plan)
+        output = render_live(source, (start, stop), folder, render_policy, plan)
         raw, review = inspection(output, length)
         result["stage"] = "inspection"
         approved = post(job, "inspect/" + reservation["id"], review)
@@ -157,12 +165,14 @@ def process_media(job, policy, history, source, folder, absolute, source_url, sl
     return True
 
 
-def capture_media(job, policy, history, media, source_url, slots, result, deadline, *, live):
-    formats = [f for f in media.get("formats", []) if 360 <= (f.get("height") or 0) <= 720]
+def capture_media(job, policy, history, media, source_url, slots, result, deadline, *, live, provider):
+    formats = [f for f in media.get("formats", []) if 360 <= (f.get("height") or 0) <= 720
+               and f.get("vcodec") not in (None, "none") and f.get("acodec") not in (None, "none")
+               and str(f.get("url", "")).startswith("https://")]
     if not formats:
         return False
     selected = min(formats, key=lambda f: abs(f["height"] - 480))
-    job["source_id"] = "twitch:" + str(media["id"])
+    job["source_id"] = ("youtube:" if provider == "youtube" else "twitch:") + str(media["id"])
     with TemporaryDirectory() as tmp:
         folder = Path(tmp)
         source = folder / "live.mkv"
@@ -223,29 +233,56 @@ def run(job):
         creators = job.get("creators", [])
         if not creators:
             raise ValueError("Missing reviewed creators")
+        creator_order = [policy.get("user") for policy in creators]
+        last_creator = next((item.get("creator") for item in reversed(history)
+                             if item.get("id", "").startswith(job["batchDay"] + "-g")
+                             and item.get("creator") in creator_order), None)
+        if last_creator:
+            index = creator_order.index(last_creator) + 1
+            creators = creators[index:] + creators[:index]
         seen = set(post(job, "clip-history", {})) if any(p.get("clips_channel_id") for p in creators) else set()
         # Finish before the signed callback expires, including bounded AI retries.
         deadline = time.monotonic() + 600
         for policy in creators:
             user = policy.get("user")
-            if user not in ("clix", "kreekcraft", "lacy") or time.monotonic() >= deadline:
+            if user not in ("clix", "kreekcraft", "kaicenat", "dylanpage", "lacy") or time.monotonic() >= deadline:
                 continue
             result["stage"] = "lookup"
             with YoutubeDL({"quiet": True, "logger": Quiet(), "socket_timeout": 10,
                             "retries": 0, "extractor_retries": 0}) as client:
-                try:
-                    stream = client.extract_info("https://www.twitch.tv/" + user, download=False)
-                except Exception:
-                    stream = None
-                if (stream and stream.get("is_live") and stream.get("uploader_id", "").casefold() == user
-                        and re.search(r"GTA\s*(6|VI)\b", stream.get("description", "") + stream.get("title", ""), re.I)
-                        and re.fullmatch(r"[0-9]{9,20}", str(stream.get("id", "")))):
-                    capture_media(job, policy, history, stream, "https://www.twitch.tv/" + user, slots, result, deadline, live=True)
-                if result["delivered"] or not slots:
-                    break
-                if policy.get("clips_channel_id"):
+                for source in policy.get("live_sources", []):
+                    if time.monotonic() >= deadline:
+                        break
+                    provider = source.get("provider")
+                    if provider not in ("twitch", "youtube"):
+                        continue
+                    try:
+                        stream = client.extract_info(source["url"], download=False)
+                    except Exception:
+                        stream = None
+                    live = bool(stream and (stream.get("is_live") is True or stream.get("live_status") == "is_live"))
+                    campaign_since = policy.get("campaign_live_since") if user in ("kaicenat", "dylanpage") and slots[0] % 2 else None
+                    stream_start = (stream or {}).get("release_timestamp") or (stream or {}).get("timestamp")
+                    if campaign_since:
+                        earliest = datetime.fromisoformat(campaign_since.replace("Z", "+00:00")).timestamp()
+                        live = live and isinstance(stream_start, (int, float)) and stream_start >= earliest
+                    if provider == "twitch":
+                        verified_source = stream and str(stream.get("uploader_id", "")).casefold() == source.get("channel")
+                        valid_id = stream and re.fullmatch(r"[0-9]{9,20}", str(stream.get("id", "")))
+                    else:
+                        channel = str((stream or {}).get("channel_url") or (stream or {}).get("uploader_url") or "").rstrip("/").casefold()
+                        verified_source = stream and channel == str(source.get("channel", "")).rstrip("/").casefold()
+                        valid_id = stream and re.fullmatch(r"[A-Za-z0-9_-]{11}", str(stream.get("id", "")))
+                    if (live and verified_source and valid_id and
+                            re.search(r"GTA\s*(6|VI)\b", stream.get("description", "") + stream.get("title", ""), re.I)):
+                        capture_media(job, policy, history, stream, source["url"], slots, result, deadline,
+                                      live=True, provider=provider)
+                    if result["delivered"] or not slots:
+                        break
+                if not result["delivered"] and slots and policy.get("clips_channel_id"):
                     for clip, url in recent_clips(client, job, policy, history, seen, result, deadline):
-                        complete = capture_media(job, policy, history, clip, url, slots, result, deadline, live=False)
+                        complete = capture_media(job, policy, history, clip, url, slots, result, deadline,
+                                                 live=False, provider="twitch")
                         if complete:
                             post(job, "clip-history", {"creator": user, "source_id": "twitch:" + str(clip["id"])})
                             seen.add("twitch:" + str(clip["id"]))
