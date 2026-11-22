@@ -235,7 +235,7 @@ def run(job):
         deadline = time.monotonic() + 600
         for policy in creators:
             user = policy.get("user")
-            if user not in ("clix", "kreekcraft", "lacy") or time.monotonic() >= deadline:
+            if user not in ("clix", "kreekcraft", "kaicenat", "lacy") or time.monotonic() >= deadline:
                 continue
             result["stage"] = "lookup"
             with YoutubeDL({"quiet": True, "logger": Quiet(), "socket_timeout": 10,

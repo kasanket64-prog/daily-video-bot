@@ -375,9 +375,16 @@ async function prepareShort(request, env, claims) {
       meta.liveChannel = env.LIVE_CHANNEL_ID;
       meta.creator = claims.liveCreator?.user || 'lacy';
       const policy = liveCreators.find(creator => creator.user === meta.creator);
-      meta.description = policy.credit + '\n' + meta.title + '\nWatch '+policy.name+' live: https://www.twitch.tv/'+policy.user;
+      Object.assign(meta, { start, duration, slot });
+      const clipup = !['kreekcraft', 'kaicenat'].includes(meta.creator) || slot % 2 === 0;
+      meta.campaign_url = clipup ? 'https://contentrewards.com/c/campaigns/802cf95a-ea84-4070-9a96-8a917831cb16' : policy.campaign;
+      meta.campaign_caption = clipup ? '#clipup' : policy.campaign_caption || '';
+      meta.logo_asset = clipup ? 'campaign-clipup.webp' : policy.logo_asset || '';
+      meta.description = [meta.campaign_caption, policy.credit, meta.title,
+        `Watch ${policy.name} live: https://www.twitch.tv/${policy.user}`].filter(Boolean).join('\n');
+    } else {
+      Object.assign(meta, { start, duration, slot });
     }
-    Object.assign(meta, { start, duration, slot });
     const language = JSON.parse(input).clipLanguage;
     if (/^[a-z]{2,3}$/.test(language || '')) meta.language = language;
     const saved = await env.DB.prepare("INSERT OR IGNORE INTO jobs(id,run_id,status,metadata,expires) SELECT ?,?,'generating',?,? WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE id LIKE '%-short' AND json_extract(metadata,'$.source_id')=? AND (json_extract(metadata,'$.start') IS NULL OR (json_extract(metadata,'$.start') < ? AND json_extract(metadata,'$.start') + coalesce(json_extract(metadata,'$.source_span'),json_extract(metadata,'$.duration'),24) > ?)))")
@@ -686,6 +693,26 @@ export async function publishDestinations(env,job,meta) {
   }
 }
 
+async function notifyCampaignSubmission(env,job,meta) {
+  if (!meta.campaign_url || !uploadsComplete(job,env)) return;
+  const key = 'campaign-submission:' + job.id;
+  if (await env.DB.prepare('SELECT value FROM settings WHERE name=?').bind(key).first()) return;
+  const links = [];
+  if (job.youtube_state === 'uploaded' && job.youtube_id) links.push(`YouTube: https://youtube.com/shorts/${job.youtube_id}`);
+  if (job.instagram_state === 'uploaded' && job.instagram_id) {
+    let url = `Instagram media ID: ${job.instagram_id}`;
+    try {
+      const media = await api(`https://graph.facebook.com/${env.META_API_VERSION}/${job.instagram_id}?fields=permalink`, {
+        headers:{Authorization:'Bearer '+env.INSTAGRAM_ACCESS_TOKEN}
+      });
+      if (typeof media.permalink === 'string' && /^https:\/\/www\.instagram\.com\//.test(media.permalink)) url = `Instagram: ${media.permalink}`;
+    } catch {}
+    links.push(url);
+  }
+  await message(env, `Your approved clip is live. Submit its public link to this campaign within 30 minutes:\n${meta.campaign_url}\n${links.join('\n')}\nRequired caption: ${meta.campaign_caption || 'follow the campaign brief'}`);
+  await env.DB.prepare('INSERT OR IGNORE INTO settings(name,value) VALUES(?,?)').bind(key,'sent').run();
+}
+
 async function tick(env) {
   if (env.LIVE_WATCH_ENABLED === 'true') {
     try { await wakeLive(env); } catch {
@@ -742,7 +769,10 @@ async function tick(env) {
         }
         await publishDestinations(env,job,meta);
         const latest = await row(env, job.id);
-        if (uploadsComplete(latest, env)) await env.DB.prepare("UPDATE jobs SET status='published' WHERE id=?").bind(job.id).run();
+        if (uploadsComplete(latest, env)) {
+          await notifyCampaignSubmission(env,latest,meta);
+          await env.DB.prepare("UPDATE jobs SET status='published' WHERE id=?").bind(job.id).run();
+        }
       }
     } catch {
       // Do not log provider errors containing credentials. Ambiguous upload states are not retried.
@@ -758,7 +788,10 @@ const liveCredit = 'Ad | #LACY | twitch.tv/lacy';
 const liveSourceFacts = "Lacy's GTA VI marathon. Require actual GTA VI gameplay and Lacy as the primary visible subject throughout. No story spoilers, sponsor logos or negative framing. Keep original synchronized stream commentary and accurate editorial text.";
 const liveCreators = [
   {user:'kreekcraft',name:'KreekCraft',credit:'Ad | KreekCraft',campaign:'https://contentrewards.com/c/campaigns/2eaa14fb-6927-4136-897e-b096e0d907d6',
+    campaign_caption:'Watch KreekCraft on YouTube and Twitch\\n#GTA6 #KreekCraft #GrandTheftAutoVI',logo_asset:'campaign-kreekcraft.webp',
     facts:"KreekCraft's GTA VI livestream. Require genuine GTA VI gameplay and the creator's visible reaction. Preserve the source stream overlay and credit the livestream. Exclude major story spoilers and commercial breaks."},
+  {user:'kaicenat',name:'Kai Cenat',credit:'Ad | #KaiCenat | twitch.tv/kaicenat',campaign:'https://contentrewards.com/c/campaigns/1d2bcb00-c904-415f-aa82-f95b96baad86',
+    campaign_caption:'#KaiCenat',facts:"Kai Cenat's official GTA 6 marathon on Twitch. Require Kai playing GTA 6 as the primary focus. Preserve original stream audio and context; reject unrelated games, misleading edits, major spoilers and fabricated reactions."},
   {user:'clix',name:'Clix',clips_channel_id:'233300375',credit:'Ad | #Clix | twitch.tv/clix',campaign:'https://reachclipping.com/ClixGTA',
     facts:"Clix's GTA VI marathon beginning November 18, 2026. Require genuine gameplay and Clix as the primary visible subject. Credit Clix with #Clix. No AI-generated footage, added logos, major story spoilers or negative false framing."},
   {user:'lacy',name:'Lacy',clips_channel_id:'494543675',credit:liveCredit,campaign:'https://reachclipping.com/LACYGTA',facts:liveSourceFacts}

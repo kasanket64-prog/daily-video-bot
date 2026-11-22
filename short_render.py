@@ -240,22 +240,35 @@ def render_live(source, moment, folder, policy, plan, *, ffmpeg="ffmpeg", ffprob
     else:
         game_x = 0
         game_y = max(0, min(h - game_h, (y + ch if (y + ch / 2) < h / 2 else y - game_h) // 2 * 2))
+    logo_asset = policy.get("logo_asset")
+    logo = logo_asset in ("campaign-kreekcraft.webp", "campaign-clipup.webp")
+    play_height = 740 if logo_asset == "campaign-kreekcraft.webp" else 730 if logo_asset == "campaign-clipup.webp" else 800
     layout = (f"[0:v]split[face][game];[face]crop={cw}:{ch}:{x}:{y},"
               "scale=720:300:force_original_aspect_ratio=increase,crop=720:300,setsar=1[portrait];"
-              f"[game]crop={game_w}:{game_h}:{game_x}:{game_y},scale=720:800,setsar=1[play];"
+              f"[game]crop={game_w}:{game_h}:{game_x}:{game_y},scale=720:{play_height},setsar=1[play];"
               "color=c=black:s=720x1280:r=30[canvas];[canvas][portrait]overlay=0:0[withface];"
-              "[withface][play]overlay=0:350,drawtext=textfile=credit.txt:expansion=none:"
-              "fontcolor=white:fontsize=26:x=24:y=312,"
+              "[withface][play]overlay=0:350[withplay];"
+              + ("[1:v]scale=590:-1[logo];[withplay][logo]overlay=(W-w)/2:1090[branded];[branded]"
+                 if logo_asset == "campaign-kreekcraft.webp" else
+                 "[1:v]scale=310:-1[logo];[withplay][logo]overlay=(W-w)/2:1080[branded];[branded]"
+                 if logo_asset == "campaign-clipup.webp" else "[withplay]")
+              + "drawtext=textfile=credit.txt:expansion=none:fontcolor=white:fontsize=26:x=24:y=312,"
               "drawtext=textfile=hook.txt:expansion=none:fontcolor=white:fontsize=38:x=(w-text_w)/2:y=370:"
               "box=1:boxcolor=black@0.65:boxborderw=16:enable='lt(t,2)',"
-              "drawtext=textfile=source.txt:expansion=none:fontcolor=white:fontsize=22:x=24:y=1215[out]")
+              f"drawtext=textfile=source.txt:expansion=none:fontcolor=white:fontsize={16 if logo else 22}:x=24:y={1040 if logo else 1215}[out]")
     (folder / "credit.txt").write_text(policy["credit"], encoding="utf-8")
     (folder / "hook.txt").write_text(plan["hook"], encoding="utf-8")
     (folder / "source.txt").write_text("Watch live: twitch.tv/" + policy["user"], encoding="utf-8")
     output = folder / "reel.mp4"
     duration = moment[1] - moment[0]
+    asset = Path(__file__).resolve().parent / "assets" / (logo_asset or "")
+    inputs = ["-ss", str(moment[0]), "-i", str(source)]
+    if logo:
+        if not asset.is_file():
+            raise FileNotFoundError("KreekCraft campaign overlay is missing")
+        inputs.extend(["-loop", "1", "-i", str(asset)])
     subprocess.run([ffmpeg, "-v", "error", "-y", "-nostdin", "-threads", "2", "-filter_complex_threads", "2",
-            "-ss", str(moment[0]), "-i", str(source), "-filter_complex", layout,
+            *inputs, "-filter_complex", layout,
             "-map", "[out]", "-map", "0:a:0", "-t", str(duration), "-r", "30",
             "-c:v", "libx264", "-threads", "2", "-preset", "veryfast", "-crf", "23",
             "-maxrate", "2200k", "-bufsize", "2200k", "-pix_fmt", "yuv420p",
