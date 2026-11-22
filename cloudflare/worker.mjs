@@ -1,5 +1,5 @@
 // Account tokens stay in Worker secrets or encrypted storage. Never return them to the renderer.
-import {connectRoute,issueConnectLink,socialEnv} from './connect.mjs';
+import {connectRoute,issueConnectLink,socialEnv,publicInfo} from './connect.mjs';
 const MAX_VIDEO = 19_000_000;
 const encoder = new TextEncoder();
 const issuer = 'https://token.actions.githubusercontent.com';
@@ -339,7 +339,7 @@ async function prepareShort(request, env, claims) {
   const meta = { title: title.slice(0, 100), description: `${script}\nFootage credit: ${credit}\nSource: ${source}\nFact sources: ${sources.join(' ')}`,
     language: /[\u0900-\u097f]/.test(script) ? 'hi' : 'en', hook, script, analysis, source_facts,
     sources: [...sources, source], materials: [], short: true, source_id, category,
-    ...(gta ? { gta: true, destinations: ['youtube', 'instagram'] } : {}) };
+    ...(gta ? { gta: true, destinations: uploadDestinations({destinations:['youtube','instagram']},env) } : {}) };
   if (batch) {
     if (claims.liveSource) {
       meta.liveChannel = env.LIVE_CHANNEL_ID;
@@ -507,7 +507,7 @@ export async function acceptPreview(request, env, claims, id) {
   ]] }));
   if (!immediate && !testPreview) form.set('disable_notification', 'true');
   form.set('caption', testPreview ? 'Shorts delivery test. This preview cannot be published.' :
-    immediate ? meta.title + '\nInspection passed. Approve this file for YouTube and Instagram.' :
+    immediate ? meta.title + '\nInspection passed. Approve this file for '+uploadDestinations(meta,env).map(p=>p==='youtube'?'YouTube':'Instagram').join(' and ')+'.' :
     `${meta.title}\nPreparing your ${meta.cartoon ? meta.short ? 'cartoon Short' : 'cartoon episode' : 'video'} for review. Approval buttons arrive around 9 AM India time.`);
   form.set('video', new Blob([data], { type: 'video/mp4' }), 'preview.mp4');
   const sent = await telegram(env, 'sendVideo', form);
@@ -523,9 +523,13 @@ export function allowedApproval(callback, job, env, seconds = Date.now() / 1000)
     callback.message?.chat?.type === 'private' && callback.message?.message_id === job.message_id;
 }
 
+export function uploadDestinations(meta, env) {
+  return (meta.destinations || ['youtube', ...(env.INSTAGRAM_ACCESS_TOKEN && env.INSTAGRAM_USER_ID && env.META_API_VERSION ? ['instagram'] : [])])
+    .filter(platform => platform !== 'instagram' || env.INSTAGRAM_ENABLED !== 'false');
+}
+
 export function uploadsComplete(job, env) {
-  const meta = JSON.parse(job.metadata || '{}');
-  const destinations = meta.destinations || ['youtube', ...(env.INSTAGRAM_ACCESS_TOKEN && env.INSTAGRAM_USER_ID && env.META_API_VERSION ? ['instagram'] : [])];
+  const destinations = uploadDestinations(JSON.parse(job.metadata || '{}'),env);
   return (!destinations.includes('youtube') || job.youtube_state === 'uploaded') &&
     (!destinations.includes('instagram') || job.instagram_state === 'uploaded');
 }
@@ -586,7 +590,7 @@ async function publishYouTube(env, job, meta) {
 }
 
 async function publishInstagram(env, job, meta) {
-  if (meta.destinations && !meta.destinations.includes('instagram')) return;
+  if (!uploadDestinations(meta,env).includes('instagram')) return;
   if (!env.INSTAGRAM_ACCESS_TOKEN || !env.INSTAGRAM_USER_ID || !env.META_API_VERSION || ['started', 'publishing', 'uploaded'].includes(job.instagram_state)) return;
   if (!/^v\d+\.\d+$/.test(env.META_API_VERSION) || !/^\d+$/.test(env.INSTAGRAM_USER_ID)) throw new Error('Invalid Meta configuration');
   const base = `https://graph.facebook.com/${env.META_API_VERSION}/`;
@@ -661,7 +665,7 @@ async function tick(env) {
       }
       const localHour = new Date(Date.now() + 19800000).getUTCHours();
       if (job.status === 'ready' && (meta.gta || localHour >= 9)) {
-        const destinations = meta.destinations || ['youtube', ...(env.INSTAGRAM_ACCESS_TOKEN && env.INSTAGRAM_USER_ID && env.META_API_VERSION ? ['instagram'] : [])];
+        const destinations = uploadDestinations(meta,env);
         const targets = destinations.map(platform => platform === 'youtube' && meta.made_for_kids ? 'YouTube (Made for Kids)' :
           platform === 'instagram' && !(env.INSTAGRAM_ACCESS_TOKEN && env.INSTAGRAM_USER_ID && env.META_API_VERSION) ? 'Instagram (not connected yet)' : platform).join(' and ');
         const lock = await env.DB.prepare("UPDATE jobs SET status='notifying' WHERE id=? AND status='ready'").bind(job.id).run();
@@ -673,7 +677,7 @@ async function tick(env) {
         await message(env, `Your daily preview is ready above.\n${meta.description}\n${meta.analysis ? `Angle: ${meta.analysis.angle}\nStory: ${meta.analysis.story_arc}\n` : ''}${meta.sources?.length ? `Sources: ${meta.sources.join('\n')}\n` : ''}${meta.materials?.length ? `Stock: ${meta.materials.map(m => m.source).join('\n')}` : ''}`);
       }
       if (job.status === 'approved') {
-        const destinations = meta.destinations || ['youtube'];
+        const destinations = uploadDestinations(meta,env);
         const missing = destinations.filter(platform => platform === 'youtube' &&
           (!env.YOUTUBE_REFRESH_TOKEN || !env.YOUTUBE_CLIENT_ID || !env.YOUTUBE_CLIENT_SECRET) ||
           platform === 'instagram' && (!env.INSTAGRAM_ACCESS_TOKEN || !env.INSTAGRAM_USER_ID || !env.META_API_VERSION));
@@ -859,7 +863,7 @@ async function ownerReview(request, env, action) {
     const status = {
       telegram:{configured:Boolean(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID && env.TELEGRAM_WEBHOOK_SECRET),webhook_matches:false},
       youtube:{configured:Boolean(env.YOUTUBE_CLIENT_ID && env.YOUTUBE_CLIENT_SECRET && env.YOUTUBE_REFRESH_TOKEN),refreshable:false},
-      instagram:{configured:Boolean(env.INSTAGRAM_ACCESS_TOKEN && env.INSTAGRAM_USER_ID && env.META_API_VERSION)}
+      instagram:{configured:Boolean(env.INSTAGRAM_ACCESS_TOKEN && env.INSTAGRAM_USER_ID && env.META_API_VERSION),paused:env.INSTAGRAM_ENABLED==='false'}
     };
     try {
       const info = await telegram(env,'getWebhookInfo',{});
@@ -929,6 +933,7 @@ export default {
     const cartoonFileRoute = /^\/render\/(?:preview|inspect)\/\d{4}-\d{2}-\d{2}-cartoon-(?:episode|short)$/.test(url.pathname);
     const cartoonRoute = cartoonStoryRoute || cartoonJobsRoute || cartoonFailureRoute || cartoonFileRoute;
     if (url.pathname === '/health' && request.method === 'GET') return json({ service: 'daily-video-approvals', enabled: enabled || cartoonsEnabled || (gta && (!previewTest || env.LIVE_WATCH_ENABLED === 'true')) });
+    if (request.method === 'GET') {const info=publicInfo(url.pathname);if(info)return info;}
     try {
       if (url.pathname === '/connect' || url.pathname.startsWith('/connect/')) return await connectRoute(request,env);
       env = await socialEnv(env);
