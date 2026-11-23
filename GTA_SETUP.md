@@ -28,6 +28,7 @@ Keep credentials in Cloudflare Worker Secrets. Do not put Google, Meta, Telegram
 
 | Setting | Purpose |
 |---|---|
+| `GTA_REELS_ENABLED` | Enables the GTA publishing workflow |
 | `LIVE_WATCH_ENABLED` | Enables cloud checks for configured live sources |
 | `LIVE_RENDER_URL` | Render clip-service address |
 | `LIVE_CHANNEL_ID` | Expected GTA VI channel identity |
