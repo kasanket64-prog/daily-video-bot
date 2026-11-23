@@ -111,6 +111,113 @@ async function message(env, text) {
   return telegram(env, 'sendMessage', { chat_id: requireValue(env, 'TELEGRAM_CHAT_ID'), text });
 }
 
+function campaignFor(meta) {
+  if (!meta?.liveChannel || !meta.creator) return null;
+  return liveCreators.find(item => item.user === meta.creator)?.campaign || null;
+}
+
+function campaignNoticeText(job, meta, notice, instagramLink) {
+  const lines = ['🎬 Published: ' + meta.title];
+  if (job.youtube_id) lines.push('YouTube: https://www.youtube.com/shorts/' + job.youtube_id);
+  else if ((meta.destinations || []).includes('youtube')) lines.push('YouTube: still processing');
+  if (instagramLink) lines.push('Instagram: ' + instagramLink);
+  else if (job.instagram_state === 'uploaded') lines.push('Instagram: published (link not returned)');
+  else if ((meta.destinations || []).includes('instagram')) lines.push('Instagram: still processing or not connected');
+  if (notice.campaign_url) {
+    lines.push('Campaign: ' + notice.campaign_url);
+    lines.push('Submit by: ' + new Date(notice.deadline * 1000).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) + ' (India time)');
+    lines.push(notice.state === 'submitted' ? '✅ Marked submitted' : 'Tap “Mark submitted” after you submit the post on the campaign site.');
+  }
+  if (notice.reminded && notice.state !== 'submitted') lines.push('⏰ Reminder: the campaign submission deadline is close.');
+  return lines.join('\n');
+}
+
+async function updatePublishedNotice(env, job) {
+  if (!job || (job.youtube_state !== 'uploaded' && job.instagram_state !== 'uploaded')) return;
+  const meta = JSON.parse(job.metadata || '{}');
+  const key = 'campaign:notice:' + job.id;
+  const saved = await env.DB.prepare('SELECT value FROM settings WHERE name=?').bind(key).first();
+  let notice = saved ? JSON.parse(saved.value) : null;
+  if (!notice) {
+    const now = Math.floor(Date.now() / 1000);
+    const campaign = campaignFor(meta);
+    notice = { state: 'sending', campaign_url: campaign, published_at: now,
+      deadline: campaign ? now + 1800 : null, reminded: false };
+    const reserved = await env.DB.prepare('INSERT OR IGNORE INTO settings(name,value) VALUES(?,?)')
+      .bind(key, JSON.stringify(notice)).run();
+    if (!reserved.meta.changes) return;
+    const instagram = await env.DB.prepare('SELECT value FROM settings WHERE name=?').bind('instagram:permalink:' + job.id).first();
+    const result = await telegram(env, 'sendMessage', { chat_id: requireValue(env, 'TELEGRAM_CHAT_ID'),
+      text: campaignNoticeText(job, meta, notice, instagram?.value),
+      ...(notice.campaign_url ? { reply_markup: { inline_keyboard: [
+        [{ text: 'Open campaign', url: notice.campaign_url }],
+        [{ text: 'Mark submitted', callback_data: 'campaign-submitted:' + job.id }]
+      ] } } : {}) });
+    notice.message_id = result.message_id;
+    notice.state = 'pending';
+    await env.DB.prepare('UPDATE settings SET value=? WHERE name=?').bind(JSON.stringify(notice), key).run();
+    return;
+  }
+  if (notice.state === 'sending' || !notice.message_id) return;
+  const instagram = await env.DB.prepare('SELECT value FROM settings WHERE name=?').bind('instagram:permalink:' + job.id).first();
+  await telegram(env, 'editMessageText', { chat_id: requireValue(env, 'TELEGRAM_CHAT_ID'),
+    message_id: notice.message_id, text: campaignNoticeText(job, meta, notice, instagram?.value),
+    ...(notice.campaign_url && notice.state !== 'submitted' ? { reply_markup: { inline_keyboard: [
+      [{ text: 'Open campaign', url: notice.campaign_url }],
+      [{ text: 'Mark submitted', callback_data: 'campaign-submitted:' + job.id }]
+    ] } } : {}) });
+}
+
+async function remindCampaignSubmissions(env) {
+  const now = Math.floor(Date.now() / 1000);
+  const due = await env.DB.prepare("SELECT name,value FROM settings WHERE name LIKE 'campaign:notice:%' AND json_extract(value,'$.state')='pending' AND json_extract(value,'$.reminded')=0 AND json_extract(value,'$.deadline')<=? AND json_extract(value,'$.deadline')>? LIMIT 50")
+    .bind(now + 600, now).all();
+  for (const entry of due.results) {
+    const notice = JSON.parse(entry.value);
+    const job = await row(env, entry.name.slice('campaign:notice:'.length));
+    if (!job || !notice.message_id) continue;
+    const meta = JSON.parse(job.metadata || '{}');
+    const instagram = await env.DB.prepare('SELECT value FROM settings WHERE name=?').bind('instagram:permalink:' + job.id).first();
+    try {
+      notice.reminded = true;
+      await telegram(env, 'editMessageText', { chat_id: requireValue(env, 'TELEGRAM_CHAT_ID'),
+        message_id: notice.message_id, text: campaignNoticeText(job, meta, notice, instagram?.value),
+        reply_markup: { inline_keyboard: [
+          [{ text: 'Open campaign', url: notice.campaign_url }],
+          [{ text: 'Mark submitted', callback_data: 'campaign-submitted:' + job.id }]
+        ] } });
+      await env.DB.prepare('UPDATE settings SET value=? WHERE name=? AND value=?')
+        .bind(JSON.stringify(notice), entry.name, entry.value).run();
+    } catch {}
+  }
+}
+
+async function markCampaignSubmitted(env, callback, id) {
+  if (String(callback.from?.id) !== String(env.TELEGRAM_USER_ID) ||
+      String(callback.message?.chat?.id) !== String(env.TELEGRAM_CHAT_ID) ||
+      callback.message?.chat?.type !== 'private') return false;
+  const key = 'campaign:notice:' + id;
+  const saved = await env.DB.prepare('SELECT value FROM settings WHERE name=?').bind(key).first();
+  if (!saved) return false;
+  const notice = JSON.parse(saved.value);
+  if (!notice.campaign_url || notice.message_id !== callback.message.message_id || notice.state === 'sending') return false;
+  if (notice.state !== 'submitted') {
+    const previous = saved.value;
+    notice.state = 'submitted';
+    notice.submitted_at = Math.floor(Date.now() / 1000);
+    const updated = await env.DB.prepare('UPDATE settings SET value=? WHERE name=? AND value=?')
+      .bind(JSON.stringify(notice), key, previous).run();
+    if (!updated.meta.changes) return false;
+  }
+  const job = await row(env, id);
+  if (!job) return false;
+  const meta = JSON.parse(job.metadata || '{}');
+  const instagram = await env.DB.prepare('SELECT value FROM settings WHERE name=?').bind('instagram:permalink:' + id).first();
+  await telegram(env, 'editMessageText', { chat_id: requireValue(env, 'TELEGRAM_CHAT_ID'),
+    message_id: notice.message_id, text: campaignNoticeText(job, meta, notice, instagram?.value) });
+  return true;
+}
+
 function day() {
   return new Date(Date.now() + 19800000).toISOString().slice(0, 10);
 }
@@ -589,6 +696,14 @@ async function webhook(request, env, allowedIds) {
     await telegram(env,'answerCallbackQuery',{callback_query_id:callback.id,text:'Private setup link sent.'});
     return json({ok:true});
   }
+  const submitted = /^campaign-submitted:([A-Za-z0-9-]{1,40})$/.exec(callback.data || '');
+  if (submitted) {
+    let accepted = false;
+    try { accepted = await markCampaignSubmitted(env, callback, submitted[1]); } catch {}
+    try { await telegram(env, 'answerCallbackQuery', { callback_query_id: callback.id,
+      text: accepted ? 'Submission marked on this message.' : 'This button is expired or not authorized.' }); } catch {}
+    return json({ ok: true });
+  }
   const match = /^(approve|reject):(\d{4}-\d{2}-\d{2}(?:(?:-g\d{2})?-short|-cartoon-(?:episode|short))?)$/.exec(callback.data || '');
   let accepted = false;
   const job = match ? await row(env, match[2]) : null;
@@ -633,7 +748,7 @@ async function publishYouTube(env, job, meta) {
   const video = await media(env, job);
   const uploaded = await api(location.toString(), { method: 'PUT', headers: { ...auth, 'Content-Type': 'video/mp4' }, body: video.body });
   await env.DB.prepare("UPDATE jobs SET youtube_state='uploaded',youtube_id=? WHERE id=?").bind(uploaded.id, job.id).run();
-  await message(env, `YouTube upload completed (${privacy}): ${uploaded.id}`);
+  await updatePublishedNotice(env, await row(env, job.id));
 }
 
 async function publishInstagram(env, job, meta) {
@@ -663,7 +778,12 @@ async function publishInstagram(env, job, meta) {
   if (!reserved.meta.changes) return;
   const result = await api(`${base}${env.INSTAGRAM_USER_ID}/media_publish`, { method: 'POST', headers, body: new URLSearchParams({ creation_id: job.instagram_id }) });
   await env.DB.prepare("UPDATE jobs SET instagram_state='uploaded',instagram_id=? WHERE id=?").bind(result.id, job.id).run();
-  await message(env, `Instagram upload completed: ${result.id}`);
+  try {
+    const permalink = await api(base + result.id + '?fields=permalink', { headers });
+    if (typeof permalink.permalink === 'string' && /^https:\/\/(?:www\.)?instagram\.com\//.test(permalink.permalink))
+      await env.DB.prepare('INSERT OR REPLACE INTO settings(name,value) VALUES(?,?)').bind('instagram:permalink:' + job.id, permalink.permalink).run();
+  } catch {}
+  await updatePublishedNotice(env, await row(env, job.id));
 }
 
 async function reserveGtaUploadSlot(env, platform, jobId) {
@@ -709,6 +829,7 @@ async function tick(env) {
   const preview = env.SHORT_PREVIEW_TEST === 'true';
   const reviews = gta ? ownerReviews(env) : [];
   if ((preview && !reviews.length && env.LIVE_WATCH_ENABLED !== 'true') || (!gta && env.AUTOMATION_ENABLED !== 'true' && !cartoonsEnabled) || !env.DB || !env.TELEGRAM_BOT_TOKEN || !env.WORKER_URL || !env.TELEGRAM_WEBHOOK_SECRET) return;
+  await remindCampaignSubmissions(env);
   const info = await telegram(env, 'getWebhookInfo', {});
   if (info.url !== env.WORKER_URL + '/telegram' || !info.allowed_updates?.includes('message')) await telegram(env, 'setWebhook', {
     url: env.WORKER_URL + '/telegram', secret_token: env.TELEGRAM_WEBHOOK_SECRET, allowed_updates: ['callback_query', 'message'] });
