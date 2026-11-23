@@ -728,16 +728,6 @@ async function publishYouTube(env, job, meta) {
   if (meta.destinations && !meta.destinations.includes('youtube')) return;
   if (!env.YOUTUBE_REFRESH_TOKEN || !env.YOUTUBE_CLIENT_ID || !env.YOUTUBE_CLIENT_SECRET || job.youtube_state) return;
   const pacedGta = Boolean(meta.gta || meta.liveChannel);
-  const now = Math.floor(Date.now() / 1000);
-  if (pacedGta) {
-    const next = await env.DB.prepare("SELECT CAST(value AS INTEGER) AS at FROM settings WHERE name='youtube:gta:next'").first();
-    if (next?.at > now) {
-      const notice = await env.DB.prepare('INSERT OR IGNORE INTO settings(name,value) VALUES(?,?)')
-        .bind('youtube:pace-notice:' + job.id, 'sent').run();
-      if (notice.meta.changes) await message(env, `Your approval for ${job.id} is saved. To avoid another upload burst, GTA Shorts are spaced about 12 hours apart; this clip stays queued for the next slot.`);
-      return;
-    }
-  }
   const token = await api('https://oauth2.googleapis.com/token', { method: 'POST', body: new URLSearchParams({
     client_id: env.YOUTUBE_CLIENT_ID, client_secret: env.YOUTUBE_CLIENT_SECRET, refresh_token: env.YOUTUBE_REFRESH_TOKEN, grant_type: 'refresh_token' }) });
   const privacy = env.YOUTUBE_PRIVACY || 'private';
@@ -745,16 +735,9 @@ async function publishYouTube(env, job, meta) {
   const auth = { Authorization: 'Bearer ' + token.access_token };
   const reserve = await env.DB.prepare("UPDATE jobs SET youtube_state='started' WHERE id=? AND status='approved' AND youtube_state IS NULL").bind(job.id).run();
   if (!reserve.meta.changes) return;
-  if (pacedGta) {
-    const pace = await env.DB.prepare("INSERT INTO settings(name,value) VALUES('youtube:gta:next',?) ON CONFLICT(name) DO UPDATE SET value=excluded.value WHERE CAST(settings.value AS INTEGER)<=?")
-      .bind(now + 43200, now).run();
-    if (!pace.meta.changes) {
-      await env.DB.prepare("UPDATE jobs SET youtube_state=NULL WHERE id=? AND status='approved' AND youtube_state='started'").bind(job.id).run();
-      const notice = await env.DB.prepare('INSERT OR IGNORE INTO settings(name,value) VALUES(?,?)')
-        .bind('youtube:pace-notice:' + job.id, 'sent').run();
-      if (notice.meta.changes) await message(env, `Your approval for ${job.id} is saved. To avoid another upload burst, GTA Shorts are spaced about 12 hours apart; this clip stays queued for the next slot.`);
-      return;
-    }
+  if (pacedGta && !await reserveGtaUploadSlot(env, 'youtube', job.id)) {
+    await env.DB.prepare("UPDATE jobs SET youtube_state=NULL WHERE id=? AND status='approved' AND youtube_state='started'").bind(job.id).run();
+    return;
   }
   const session = await fetch('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status', {
     method: 'POST', redirect: 'manual', headers: { ...auth, 'Content-Type': 'application/json', 'X-Upload-Content-Type': 'video/mp4', 'X-Upload-Content-Length': String(job.size) },
@@ -790,6 +773,7 @@ async function publishInstagram(env, job, meta) {
     if (['ERROR', 'EXPIRED'].includes(status.status_code)) throw new Error('Instagram processing failed');
     return;
   }
+  if ((meta.gta || meta.liveChannel) && !await reserveGtaUploadSlot(env, 'instagram', job.id)) return;
   const reserved = await env.DB.prepare("UPDATE jobs SET instagram_state='publishing' WHERE id=? AND status='approved' AND instagram_state='processing'").bind(job.id).run();
   if (!reserved.meta.changes) return;
   const result = await api(`${base}${env.INSTAGRAM_USER_ID}/media_publish`, { method: 'POST', headers, body: new URLSearchParams({ creation_id: job.instagram_id }) });
@@ -800,6 +784,22 @@ async function publishInstagram(env, job, meta) {
       await env.DB.prepare('INSERT OR REPLACE INTO settings(name,value) VALUES(?,?)').bind('instagram:permalink:' + job.id, permalink.permalink).run();
   } catch {}
   await updatePublishedNotice(env, await row(env, job.id));
+}
+
+async function reserveGtaUploadSlot(env, platform, jobId) {
+  const configured = Number(env.GTA_UPLOAD_GAP_SECONDS || 600);
+  const gap = Number.isInteger(configured) && configured >= 300 && configured <= 600 ? configured : 600;
+  const now = Math.floor(Date.now() / 1000);
+  const name = `gta:${platform}:next`;
+  const reserved = await env.DB.prepare('INSERT INTO settings(name,value) VALUES(?,?) ON CONFLICT(name) DO UPDATE SET value=excluded.value WHERE CAST(settings.value AS INTEGER)<=?')
+    .bind(name, String(now + gap), now).run();
+  if (reserved.meta.changes) return true;
+  const notice = await env.DB.prepare('INSERT OR IGNORE INTO settings(name,value) VALUES(?,?)')
+    .bind(`gta:${platform}:pace-notice:${jobId}`, 'sent').run();
+  if (notice.meta.changes) {
+    await message(env, `Your approval for ${jobId} is saved. GTA uploads are spaced ${Math.ceil(gap / 60)} minutes apart to avoid a burst; this clip stays queued for its next slot.`);
+  }
+  return false;
 }
 
 export async function publishDestinations(env,job,meta) {
@@ -1002,6 +1002,15 @@ async function liveRoute(request, env, path) {
       const notice = await env.DB.prepare('INSERT OR IGNORE INTO settings(name,value) VALUES(?,?)')
         .bind('live:failure:'+day(),'notified').run();
       if (notice.meta.changes) await message(env,'The live clipper reached an error and will retry on the next cloud check. Failed clips stay out of the approval queue.');
+    } else if (input.state === 'complete' && count('delivered') === 0) {
+      const notice = await env.DB.prepare('INSERT OR IGNORE INTO settings(name,value) VALUES(?,?)')
+        .bind('live:empty:'+day(),'notified').run();
+      if (notice.meta.changes) {
+        const text = count('held') > 0
+          ? `Today's GTA check found candidates, but none passed the quality inspection. No clip was sent for approval; the cloud check will keep looking.`
+          : `Today's GTA check found no fresh eligible clip in the reviewed streams. Nothing was sent for approval; the cloud check will keep looking.`;
+        await message(env,text);
+      }
     }
     return json({received:true});
   }
