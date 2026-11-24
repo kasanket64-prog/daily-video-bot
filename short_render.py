@@ -240,20 +240,28 @@ def render_live(source, moment, folder, policy, plan, *, ffmpeg="ffmpeg", ffprob
     else:
         game_x = 0
         game_y = max(0, min(h - game_h, (y + ch if (y + ch / 2) < h / 2 else y - game_h) // 2 * 2))
+    duration = moment[1] - moment[0]
+    font = next((path for path in ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                                   "C:/Windows/Fonts/arialbd.ttf") if Path(path).is_file()), None)
+    if not font:
+        raise RuntimeError("No supported caption font found")
+    font = font.replace("\\", "/").replace(":", r"\:")
     layout = (f"[0:v]split[face][game];[face]crop={cw}:{ch}:{x}:{y},"
               "scale=720:300:force_original_aspect_ratio=increase,crop=720:300,setsar=1[portrait];"
               f"[game]crop={game_w}:{game_h}:{game_x}:{game_y},scale=720:800,setsar=1[play];"
               "color=c=black:s=720x1280:r=30[canvas];[canvas][portrait]overlay=0:0[withface];"
-              "[withface][play]overlay=0:350,drawtext=textfile=credit.txt:expansion=none:"
+              f"[withface][play]overlay=0:350,drawtext=fontfile='{font}':textfile=credit.txt:expansion=none:"
               "fontcolor=white:fontsize=26:x=24:y=312,"
-              "drawtext=textfile=hook.txt:expansion=none:fontcolor=white:fontsize=38:x=(w-text_w)/2:y=370:"
+              f"drawtext=fontfile='{font}':textfile=hook.txt:expansion=none:fontcolor=white:fontsize=38:x=(w-text_w)/2:y=370:"
               "box=1:boxcolor=black@0.65:boxborderw=16:enable='lt(t,2)',"
-              "drawtext=textfile=source.txt:expansion=none:fontcolor=white:fontsize=22:x=24:y=1215[out]")
+              f"drawtext=fontfile='{font}':textfile=cta.txt:expansion=none:fontcolor=white:fontsize=28:x=(w-text_w)/2:y=1150:"
+              f"box=1:boxcolor=black@0.72:boxborderw=12:enable='gte(t\\,{max(0,duration-2.5):.2f})',"
+              f"drawtext=fontfile='{font}':textfile=source.txt:expansion=none:fontcolor=white:fontsize=22:x=24:y=1215[out]")
     (folder / "credit.txt").write_text(policy["credit"], encoding="utf-8")
     (folder / "hook.txt").write_text(plan["hook"], encoding="utf-8")
+    (folder / "cta.txt").write_text(plan["cta"], encoding="utf-8")
     (folder / "source.txt").write_text("Watch live: twitch.tv/" + policy["user"], encoding="utf-8")
     output = folder / "reel.mp4"
-    duration = moment[1] - moment[0]
     subprocess.run([ffmpeg, "-v", "error", "-y", "-nostdin", "-threads", "2", "-filter_complex_threads", "2",
             "-ss", str(moment[0]), "-i", str(source), "-filter_complex", layout,
             "-map", "[out]", "-map", "0:a:0", "-t", str(duration), "-r", "30",
@@ -265,3 +273,4 @@ def render_live(source, moment, folder, policy, plan, *, ffmpeg="ffmpeg", ffprob
     if max(gta_levels(output, ffmpeg=ffmpeg), default=-80) < -50:
         raise ValueError("Silent live export")
     return output
+

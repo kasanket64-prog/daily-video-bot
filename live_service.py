@@ -104,14 +104,15 @@ def process_media(job, policy, history, source, folder, absolute, source_url, sl
     duration = float(probe(source)["format"]["duration"])
     if duration < 12:
         return False
-    length = min(24, int(duration))
+    length = min(18, int(duration))
     used = [(x["start"], x["start"] + x.get("duration", 24)) for x in history
             if x.get("source_id") == job["source_id"] and x.get("start") is not None]
     result["stage"] = "selection"
     for candidate in neon.rank(source, duration, count=2, length=length):
         if time.monotonic() >= deadline or not slots:
             return False
-        start = int(candidate["start"])
+        # Neon centers its activity peak; shift it earlier so viewers reach the event sooner.
+        start = min(int(candidate["start"]) + 3, int(duration - length))
         stop = start + length
         if (stop > duration or (candidate.get("features", {}).get("motion") or 0) < .015
                 or any(absolute + start < b and a < absolute + stop for a, b in used)):
@@ -150,7 +151,8 @@ def process_media(job, policy, history, source, folder, absolute, source_url, sl
             title=plan["title"], hook=plan["hook"],
             script="Editorial summary of the source highlight. " + plan["payoff"], clipLanguage="en",
             analysis=dict(angle=plan["payoff"][:240], audience="GTA VI viewers", story_arc=plan["payoff"][:240],
-                emotion="Surprise", sound_plan="Original synchronized stream commentary and gameplay audio", cta="Watch the outcome"))
+                emotion="Surprise", sound_plan="Original synchronized stream commentary and gameplay audio",
+                cta=plan["cta"]))
         result["stage"] = "reservation"
         reservation = post(job, "short", metadata)
         if reservation.get("skip"):
@@ -327,3 +329,4 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     ThreadingHTTPServer(("0.0.0.0", int(os.getenv("PORT", "10000"))), Handler).serve_forever()
+
