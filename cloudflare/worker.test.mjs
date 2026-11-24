@@ -65,7 +65,7 @@ test('inspector requires every explicit check and never treats missing or string
 
 test('live clips need separate clear-speech and exceptional-payoff passes',()=>{
   const base={facts_supported:true,visuals_relevant:true,captions_readable:true,narration_matches:true,hook_clear:true};
-  const live={liveChannel:'reviewed-stream'};
+  const live={liveChannel:'reviewed-stream',analysis:{cta:'Would you try that jump?'}};
   assert.equal(inspectionPassed(base),true);
   assert.equal(inspectionPassed(base,live),false);
   const strong={...base,voice_clear:true,standout_moment:true,cta_supported:true};
@@ -77,7 +77,7 @@ test('live clips need separate clear-speech and exceptional-payoff passes',()=>{
 
 test('an older live inspection is reviewed again and the stronger result is cached',async()=>{
   const sha256='1'.repeat(64),checks={facts_supported:true,visuals_relevant:true,captions_readable:true,narration_matches:true,hook_clear:true};
-  const meta={slot:1,duration:24,liveChannel:'reviewed-stream',creator:'clix',title:'A surprising escape',source_facts:'Reviewed source facts',sources:['https://example.com'],inspection:{passed:true,sha256,checks}};
+  const meta={slot:1,duration:24,liveChannel:'reviewed-stream',creator:'clix',title:'A surprising escape',source_facts:'Reviewed source facts',sources:['https://example.com'],analysis:{cta:'Would you try that escape?'},inspection:{passed:true,sha256,checks}};
   const job={run_id:'test',status:'generating',expires:Date.now()/1000+600,metadata:JSON.stringify(meta)};
   const DB={prepare(){return {bind(...values){return {async first(){return job;},async run(){job.metadata=values[0];return {meta:{changes:1}};}};}};}};
   const old=globalThis.fetch;let reviews=0;
@@ -104,7 +104,7 @@ test('a live preview cannot use an older or failed voice/payoff inspection',asyn
   const base={facts_supported:true,visuals_relevant:true,captions_readable:true,narration_matches:true,hook_clear:true};
   let writes=0;
   for(const checks of [base,{...base,voice_clear:false,standout_moment:true,cta_supported:true},{...base,voice_clear:true,standout_moment:false,cta_supported:true},{...base,voice_clear:true,standout_moment:true,cta_supported:false}]){
-    const job={run_id:'test',status:'generating',expires:Date.now()/1000+600,metadata:JSON.stringify({liveChannel:'reviewed-stream',inspection:{passed:true,sha256,checks}})};
+    const job={run_id:'test',status:'generating',expires:Date.now()/1000+600,metadata:JSON.stringify({liveChannel:'reviewed-stream',analysis:{cta:'Would you try that escape?'},inspection:{passed:true,sha256,checks}})};
     const DB={prepare(){return {bind(){return {async first(){return job;},async run(){writes++;}};}};}};
     const request=new Request('https://example.com/live/preview/test',{method:'POST',headers:{'Content-Length':String(data.length)},body:data});
     assert.equal((await acceptPreview(request,{DB},{run_id:'test'},'test')).status,409);
@@ -513,4 +513,3 @@ test('a pinned edit receives only its deployer-reviewed source interval without 
   await restorePinnedSourceWindows({DB,OWNER_REVIEW_REEL:[reel,{...reel,sha256:'wrong'},{...reel,metadata:{source_window:{start:2,span:999}}}]});
   assert.deepEqual(writes,[[1795250845,180,reel.id,reel.sha256]]);
 });
-
