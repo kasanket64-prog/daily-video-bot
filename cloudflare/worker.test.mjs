@@ -30,9 +30,9 @@ for(const scenario of ['recover','exhaust','invalid-key','long-cooldown','incomp
 });
 
 test('live editorial plans require bounded factual text and a visible facecam crop', () => {
-  const good={usable:true,standout:true,highlight_type:'escape',title:'The red car gets away',hook:'Watch the red car',payoff:'The car escapes',facecam:{x:0,y:0,w:.25,h:.4}};
+  const good={usable:true,standout:true,highlight_type:'escape',title:'The red car gets away',hook:'Watch the red car',payoff:'The car escapes',cta:'Would you try that jump?',facecam:{x:0,y:0,w:.25,h:.4}};
   assert.equal(Boolean(validLivePlan(good)),true);
-  for(const change of [{usable:false},{standout:false},{standout:undefined},{standout:'true'},{highlight_type:undefined},{highlight_type:'idle_stakeout'},{hook:'a'.repeat(33)},{payoff:''},{facecam:{x:.9,y:0,w:.25,h:.4}},{facecam:{x:0,y:0,w:0,h:1}},{title:'two\nlines'}]){
+  for(const change of [{usable:false},{standout:false},{standout:undefined},{standout:'true'},{highlight_type:undefined},{highlight_type:'idle_stakeout'},{hook:'a'.repeat(33)},{payoff:''},{cta:'Follow for more'},{cta:'a'.repeat(43)+'?'},{facecam:{x:.9,y:0,w:.25,h:.4}},{facecam:{x:0,y:0,w:0,h:1}},{title:'two\nlines'}]){
     assert.equal(Boolean(validLivePlan({...good,...change})),false);
   }
 });
@@ -68,9 +68,9 @@ test('live clips need separate clear-speech and exceptional-payoff passes',()=>{
   const live={liveChannel:'reviewed-stream'};
   assert.equal(inspectionPassed(base),true);
   assert.equal(inspectionPassed(base,live),false);
-  const strong={...base,voice_clear:true,standout_moment:true};
+  const strong={...base,voice_clear:true,standout_moment:true,cta_supported:true};
   assert.equal(inspectionPassed(strong,live),true);
-  for(const field of ['voice_clear','standout_moment']){
+  for(const field of ['voice_clear','standout_moment','cta_supported']){
     for(const value of [false,undefined,'true']) assert.equal(inspectionPassed({...strong,[field]:value},live),false);
   }
 });
@@ -85,8 +85,8 @@ test('an older live inspection is reviewed again and the stronger result is cach
     reviews++;
     assert.match(url,/generativelanguage.googleapis.com/);
     const prompt=JSON.parse(init.body).contents[0].parts[0].text;
-    assert.match(prompt,/voice_clear/);assert.match(prompt,/standout_moment/);
-    return Response.json({candidates:[{content:{parts:[{text:JSON.stringify({...checks,voice_clear:true,standout_moment:true,reason:'Clear spoken reaction and a surprising escape payoff'})}]}}]});
+    assert.match(prompt,/voice_clear/);assert.match(prompt,/standout_moment/);assert.match(prompt,/cta_supported/);
+    return Response.json({candidates:[{content:{parts:[{text:JSON.stringify({...checks,voice_clear:true,standout_moment:true,cta_supported:true,reason:'Clear spoken reaction and a surprising escape payoff'})}]}}]});
   };
   const request=()=>new Request('https://example.com/live/inspect/test',{method:'POST',body:JSON.stringify({sha256,duration:24,frames:Array(6).fill('a'.repeat(104)),audio:'a'.repeat(104)})});
   try{
@@ -94,6 +94,7 @@ test('an older live inspection is reviewed again and the stronger result is cach
     assert.equal(reviews,1);
     assert.equal(JSON.parse(job.metadata).inspection.checks.voice_clear,true);
     assert.equal(JSON.parse(job.metadata).inspection.checks.standout_moment,true);
+    assert.equal(JSON.parse(job.metadata).inspection.checks.cta_supported,true);
   }finally{globalThis.fetch=old;}
 });
 
@@ -102,7 +103,7 @@ test('a live preview cannot use an older or failed voice/payoff inspection',asyn
   const sha256=Buffer.from(await crypto.subtle.digest('SHA-256',data)).toString('hex');
   const base={facts_supported:true,visuals_relevant:true,captions_readable:true,narration_matches:true,hook_clear:true};
   let writes=0;
-  for(const checks of [base,{...base,voice_clear:false,standout_moment:true},{...base,voice_clear:true,standout_moment:false}]){
+  for(const checks of [base,{...base,voice_clear:false,standout_moment:true,cta_supported:true},{...base,voice_clear:true,standout_moment:false,cta_supported:true},{...base,voice_clear:true,standout_moment:true,cta_supported:false}]){
     const job={run_id:'test',status:'generating',expires:Date.now()/1000+600,metadata:JSON.stringify({liveChannel:'reviewed-stream',inspection:{passed:true,sha256,checks}})};
     const DB={prepare(){return {bind(){return {async first(){return job;},async run(){writes++;}};}};}};
     const request=new Request('https://example.com/live/preview/test',{method:'POST',headers:{'Content-Length':String(data.length)},body:data});
@@ -222,7 +223,7 @@ for (const live of [false, true]) test('GTA preview sends once with correct appr
   const sha256 = Buffer.from(await crypto.subtle.digest('SHA-256', data)).toString('hex');
   const job = { run_id: '1', status: 'generating', expires: Date.now() / 1000 + 1000,
     metadata: JSON.stringify({ gta: true, title: "GTA VI", ...(live?{liveChannel:'reviewed-stream'}:{}), inspection: { passed: true, sha256,
-      checks:{facts_supported:true,visuals_relevant:true,captions_readable:true,narration_matches:true,hook_clear:true,voice_clear:true,standout_moment:true} } }) };
+      checks:{facts_supported:true,visuals_relevant:true,captions_readable:true,narration_matches:true,hook_clear:true,voice_clear:true,standout_moment:true,cta_supported:true} } }) };
   const DB = { prepare(sql) { return { bind(...values) { return {
     async first() { return job; },
     async run() {
@@ -512,3 +513,4 @@ test('a pinned edit receives only its deployer-reviewed source interval without 
   await restorePinnedSourceWindows({DB,OWNER_REVIEW_REEL:[reel,{...reel,sha256:'wrong'},{...reel,metadata:{source_window:{start:2,span:999}}}]});
   assert.deepEqual(writes,[[1795250845,180,reel.id,reel.sha256]]);
 });
+
