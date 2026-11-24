@@ -1,13 +1,34 @@
+import json
 from pathlib import Path
 import shutil
 import subprocess
 from tempfile import TemporaryDirectory
 import unittest
 
+from gta_batch import edit
 from short_render import gameplay_moments, gta_levels, gta_signals, gta_windows
 
 
 class GtaWindowsTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "requires FFmpeg")
+    def test_batch_editor_renders_hook_and_event_question_on_black_vertical_canvas(self):
+        with TemporaryDirectory() as folder:
+            folder = Path(folder)
+            source = folder / "gameplay.mkv"
+            subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
+                "testsrc2=size=160x90:rate=10:duration=4", "-f", "lavfi", "-i",
+                "sine=frequency=440:duration=4", "-c:v", "ffv1", "-c:a", "pcm_s16le", str(source)], check=True)
+            output = edit(source, 0, 4, {"credit":"Ad | Creator"}, folder, [],
+                {"hook":"That jump went wrong", "cta":"Would you risk that jump?"})
+            details = subprocess.check_output(["ffprobe", "-v", "error", "-show_entries",
+                "stream=width,height,codec_type:format=duration", "-of", "json", str(output)], text=True)
+            result = json.loads(details)
+            video = next(stream for stream in result["streams"] if stream["codec_type"] == "video")
+            self.assertEqual((video["width"], video["height"]), (720, 1280))
+            self.assertAlmostEqual(float(result["format"]["duration"]), 4, delta=.1)
+            self.assertTrue((folder / "hook.txt").is_file())
+            self.assertTrue((folder / "cta.txt").is_file())
+
     @unittest.skipUnless(shutil.which("ffmpeg"), "requires FFmpeg")
     def test_combined_scan_preserves_audio_and_motion(self):
         with TemporaryDirectory() as folder:

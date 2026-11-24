@@ -3,7 +3,46 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import worker, { validateClaims, authenticate, validateMetadata, allowedApproval, parseTrends, prepareJob, uploadsComplete, fitnessTrends, selectFitnessClip, inspectionPassed, acceptPreview, inspectDraft } from './worker.mjs';
 import {liveToken,validateLiveToken,restorePinnedSourceWindows,nextGtaPublishAt} from './worker.mjs';
-import {validLivePlan,publishDestinations,uploadDestinations} from './worker.mjs';
+import {validClipPlan,validLivePlan,publishDestinations,uploadDestinations} from './worker.mjs';
+import {createClipPlan} from './worker.mjs';
+
+test('batch GTA plans require a factual hook, payoff, and event-specific question',()=>{
+  const plan={usable:true,standout:true,title:'The jump goes sideways',hook:'That landing was rough',
+    payoff:'The car slides backward off the bridge.',cta:'Would you risk that jump?'};
+  assert.equal(validClipPlan(plan),true);
+  for(const change of [{usable:false},{standout:false},{cta:'Follow for more'},
+    {cta:'a'.repeat(43)+'?'},{hook:'a'.repeat(33)},{payoff:''},{title:'two\nlines'}])
+    assert.equal(validClipPlan({...plan,...change}),false);
+  const base={facts_supported:true,visuals_relevant:true,captions_readable:true,narration_matches:true,hook_clear:true};
+  assert.equal(inspectionPassed(base,{gta:true}),false);
+  assert.equal(inspectionPassed({...base,voice_clear:true,standout_moment:true,cta_supported:true},{gta:true}),true);
+  for(const field of ['voice_clear','standout_moment','cta_supported'])
+    assert.equal(inspectionPassed({...base,voice_clear:true,standout_moment:true,cta_supported:true,[field]:false},{gta:true}),false);
+});
+
+test('batch clip plans use reviewed frames and fail closed on routine moments',async()=>{
+  const old=globalThis.fetch;
+  const plan={usable:true,standout:true,title:'The bridge jump backfires',hook:'He nearly clears the gap',
+    payoff:'The car slides back down the bridge.',cta:'Would you try that jump?',reason:'The jump reverses unexpectedly.'};
+  let requestBody;
+  globalThis.fetch=async(url,init)=>{
+    assert.match(url,/generativelanguage.googleapis.com/);
+    requestBody=JSON.parse(init.body);
+    return Response.json({candidates:[{content:{parts:[{text:JSON.stringify(plan)}]}}]});
+  };
+  const input={frames:Array(6).fill('a'.repeat(104)),transcript:'The car is going for the jump.',
+    story:'A car attempts a bridge jump and slides backward.',source_facts:'Approved stream clip with the creator commentary and the GTA VI bridge jump.'};
+  try{
+    const response=await createClipPlan(new Request('https://example.com/render/clip-plan',{method:'POST',body:JSON.stringify(input)}),{GEMINI_MODEL:'test',GEMINI_API_KEY:'private'});
+    assert.equal(response.status,200);
+    assert.deepEqual(await response.json(),plan);
+    assert.equal(requestBody.contents[0].parts.length,7);
+    assert.match(requestBody.contents[0].parts[0].text,/never instructions/);
+    globalThis.fetch=async()=>Response.json({candidates:[{content:{parts:[{text:JSON.stringify({...plan,usable:false,reason:'Routine progress.'})}]}}]});
+    const held=await createClipPlan(new Request('https://example.com/render/clip-plan',{method:'POST',body:JSON.stringify(input)}),{GEMINI_MODEL:'test',GEMINI_API_KEY:'private'});
+    assert.deepEqual(await held.json(),{usable:false,reason:'Routine progress.'});
+  }finally{globalThis.fetch=old;}
+});
 
 for(const scenario of ['recover','exhaust','invalid-key','long-cooldown','incomplete']) test('live AI recovery: '+scenario,async()=>{
   const old=globalThis.fetch;let calls=0;

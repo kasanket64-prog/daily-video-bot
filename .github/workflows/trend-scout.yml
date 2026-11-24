@@ -63,7 +63,7 @@ jobs:
           delivery=()
           if [[ "$SHORT_TELEGRAM_ENABLED" == true || "$GTA_REELS_ENABLED" == true ]]; then
             sudo apt-get update -qq
-            sudo apt-get install -y ffmpeg fonts-noto-core
+            sudo apt-get install -y ffmpeg fonts-dejavu-core fonts-noto-core
             delivery+=(--deliver --render-dir "$RUNNER_TEMP/short-draft")
           fi
           if [[ "$GTA_REELS_ENABLED" == true ]]; then

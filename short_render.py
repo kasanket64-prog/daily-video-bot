@@ -249,7 +249,7 @@ def render_live(source, moment, folder, policy, plan, *, ffmpeg="ffmpeg", ffprob
     layout = (f"[0:v]split[face][game];[face]crop={cw}:{ch}:{x}:{y},"
               "scale=720:300:force_original_aspect_ratio=increase,crop=720:300,setsar=1[portrait];"
               f"[game]crop={game_w}:{game_h}:{game_x}:{game_y},scale=720:800,setsar=1[play];"
-              "color=c=black:s=720x1280:r=30[canvas];[canvas][portrait]overlay=0:0[withface];"
+              f"color=c=black:s=720x1280:r=30:d={duration}[canvas];[canvas][portrait]overlay=0:0[withface];"
               f"[withface][play]overlay=0:350,drawtext=fontfile='{font}':textfile=credit.txt:expansion=none:"
               "fontcolor=white:fontsize=26:x=24:y=312,"
               f"drawtext=fontfile='{font}':textfile=hook.txt:expansion=none:fontcolor=white:fontsize=38:x=(w-text_w)/2:y=370:"
@@ -273,4 +273,3 @@ def render_live(source, moment, folder, policy, plan, *, ffmpeg="ffmpeg", ffprob
     if max(gta_levels(output, ffmpeg=ffmpeg), default=-80) < -50:
         raise ValueError("Silent live export")
     return output
-
