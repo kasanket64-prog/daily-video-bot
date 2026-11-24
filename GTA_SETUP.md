@@ -10,7 +10,7 @@ The active configured sources are KreekCraft, Clix, and Lacy. They are not a uni
 
 - Keep the original stream sound and clear speech. Reject silent, garbled, unrelated, routine, or unfinished moments.
 - Select only a specific chaotic, surprising, or funny event with a comprehensible setup and payoff. Do not claim virality.
-- Target an 18-second edit, move the selected activity into roughly the first five seconds, show the complete payoff, and end with a brief event-specific viewer question. Keep the creator's original stream audio; the question is on-screen text, not extra voiceover.
+- Target an edit of at most 18 seconds, move the selected activity into roughly the first five seconds, show the complete payoff, and end with a brief event-specific viewer question. Both the Render live-stream path and the GitHub Actions clip path use this structure. Keep the creator's original stream audio; the question is on-screen text, not extra voiceover.
 - Keep the black-background layout, creator credit, and required campaign labels. Every candidate must pass inspection before Telegram delivery.
 - Each Telegram preview needs its own approval. No approval means no upload.
 - Approved GTA posts publish at the next 9:00 AM India time slot. Approval before 9:00 AM is queued for that morning; approval at or after 9:00 AM is queued for the next morning. If several are approved, each platform keeps its 10-minute spacing, so later posts follow the first in order.
@@ -49,4 +49,3 @@ Use `GET /health` to confirm the Worker is reachable and the Render `/health` pa
 5. Review the Content Rewards campaign page for any separate link-submission deadline after a post goes live.
 
 See [README](README.md) for the project overview and [CONTENT_ENGINE](CONTENT_ENGINE.md) for source-rights and review design.
-
