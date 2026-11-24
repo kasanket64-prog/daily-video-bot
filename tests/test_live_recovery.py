@@ -14,6 +14,7 @@ class LiveRecoveryTests(unittest.TestCase):
             if route=="short-history": return []
             if route=="plan": return {"usable":True,"standout":True,"highlight_type":"escape",
                 "title":"The car flips and escapes","hook":"Watch the escape","payoff":"The car flips and escapes",
+                "cta":"Would you risk that escape?",
                 "facecam":{"x":0,"y":0,"w":.3,"h":.4}}
             if route=="short": return {"id":"2026-11-22-g01-short"}
             return {"passed":True}
