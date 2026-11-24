@@ -222,6 +222,12 @@ function day() {
   return new Date(Date.now() + 19800000).toISOString().slice(0, 10);
 }
 
+export function nextGtaPublishAt(approvedAt) {
+  const localDay = Math.floor((approvedAt + 19800) / 86400) * 86400;
+  const nineAm = localDay + 32400 - 19800;
+  return approvedAt <= nineAm ? nineAm : nineAm + 86400;
+}
+
 async function row(env, id) {
   return env.DB.prepare('SELECT * FROM jobs WHERE id = ?').bind(id).first();
 }
@@ -706,14 +712,25 @@ async function webhook(request, env, allowedIds) {
   }
   const match = /^(approve|reject):(\d{4}-\d{2}-\d{2}(?:(?:-g\d{2})?-short|-cartoon-(?:episode|short))?)$/.exec(callback.data || '');
   let accepted = false;
+  let answerText = 'Already handled, expired, or not authorized.';
   const job = match ? await row(env, match[2]) : null;
   const live = job && env.LIVE_WATCH_ENABLED === 'true' && JSON.parse(job.metadata).liveChannel === env.LIVE_CHANNEL_ID;
   if (match && (!allowedIds || allowedIds.includes(match[2]) || live) && allowedApproval(callback, job, env)) {
-    const result = await env.DB.prepare("UPDATE jobs SET status=? WHERE id=? AND status='pending' AND expires>?")
-      .bind(match[1] === 'approve' ? 'approved' : 'rejected', match[2], Math.floor(Date.now() / 1000)).run();
+    const now = Math.floor(Date.now() / 1000);
+    const result = await env.DB.prepare("UPDATE jobs SET status=?,metadata=json_set(metadata,'$.approved_at',?) WHERE id=? AND status='pending' AND expires>?")
+      .bind(match[1] === 'approve' ? 'approved' : 'rejected', now, match[2], now).run();
     accepted = Boolean(result.meta.changes);
+    if (accepted) {
+      answerText = 'Decision saved.';
+      const meta = JSON.parse(job.metadata || '{}');
+      if (match[1] === 'approve' && (meta.gta || meta.liveChannel)) {
+        const publishAt = nextGtaPublishAt(now);
+        const scheduled = new Intl.DateTimeFormat('en-IN', { timeZone:'Asia/Kolkata', dateStyle:'medium', timeStyle:'short' }).format(new Date(publishAt * 1000));
+        answerText = `Approved. Scheduled for ${scheduled} IST.`;
+      }
+    }
   }
-  try { await telegram(env, 'answerCallbackQuery', { callback_query_id: callback.id, text: accepted ? 'Decision saved.' : 'Already handled, expired, or not authorized.' }); } catch {}
+  try { await telegram(env, 'answerCallbackQuery', { callback_query_id: callback.id, text: answerText }); } catch {}
   return json({ ok: true });
 }
 
@@ -862,6 +879,10 @@ async function tick(env) {
         await message(env, `Your daily preview is ready above.\n${meta.description}\n${meta.analysis ? `Angle: ${meta.analysis.angle}\nStory: ${meta.analysis.story_arc}\n` : ''}${meta.sources?.length ? `Sources: ${meta.sources.join('\n')}\n` : ''}${meta.materials?.length ? `Stock: ${meta.materials.map(m => m.source).join('\n')}` : ''}`);
       }
       if (job.status === 'approved') {
+        if (meta.gta || meta.liveChannel) {
+          const approvedAt = Number.isInteger(meta.approved_at) ? meta.approved_at : Math.floor(Date.now() / 1000);
+          if (Date.now() / 1000 < nextGtaPublishAt(approvedAt)) continue;
+        }
         const destinations = uploadDestinations(meta,env);
         const missing = destinations.filter(platform => platform === 'youtube' &&
           (!env.YOUTUBE_REFRESH_TOKEN || !env.YOUTUBE_CLIENT_ID || !env.YOUTUBE_CLIENT_SECRET) ||

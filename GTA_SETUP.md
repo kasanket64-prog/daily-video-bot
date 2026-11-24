@@ -12,13 +12,14 @@ The active configured sources are KreekCraft, Clix, and Lacy. They are not a uni
 - Select only a specific chaotic, surprising, or funny event with a comprehensible setup and payoff. Do not claim virality.
 - Keep the black-background layout, creator credit, and required campaign labels. Every candidate must pass inspection before Telegram delivery.
 - Each Telegram preview needs its own approval. No approval means no upload.
-- YouTube and Instagram uploads are paced independently: the configured interval between GTA posts on each platform. The default is `GTA_UPLOAD_GAP_SECONDS=600`; values from 300 to 600 seconds are accepted. The five-minute Worker schedule can make the actual wait longer.
+- Approved GTA posts publish at the next 9:00 AM India time slot. Approval before 9:00 AM is queued for that morning; approval at or after 9:00 AM is queued for the next morning. If several are approved, each platform keeps its 10-minute spacing, so later posts follow the first in order.
+- YouTube and Instagram uploads remain paced independently by `GTA_UPLOAD_GAP_SECONDS=600` (10 minutes; allowed range 300–600 seconds). The five-minute Worker schedule and upload processing can make the actual publication a few minutes later than the target.
 - A daily Telegram status notice reports when no fresh eligible clip is found or all candidates fail inspection. Cloud service errors also produce a Telegram notice.
 - Instagram stays paused until its account connection is complete. YouTube and Instagram each have separate upload states, so one destination can finish while the other waits.
 
 ## Campaigns and earnings
 
-The bot prepares campaign-suitable clips for the campaign sources it has configured. It does not automatically enroll in new campaigns, accept changing campaign terms, or submit campaign links to the rewards site. You still need to join campaigns when eligible and submit the published post URL where the campaign requires it. A public post is not guaranteed to qualify for a reward; check that campaign's rules and deadline.
+The bot prepares campaign-suitable clips for the campaign sources it has configured. It does not automatically enroll in new campaigns, accept changing campaign terms, or submit campaign links to the rewards site. After a campaign clip publishes, Telegram sends one message with its post URL, campaign link, and the 30-minute deadline. Submit the post on the campaign site yourself, then tap **Mark submitted** on that same message. A public post is not guaranteed to qualify for a reward; check that campaign's rules and deadline.
 
 ## Current operating setup
 
