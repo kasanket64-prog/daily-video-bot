@@ -13,7 +13,9 @@ A cloud-hosted workflow for finding fresh GTA VI livestream moments, editing can
 - Only approved clips are published; Telegram approval is required for every video.
 - The live workflow checks reviewed campaign sources and rejects routine moments, unclear audio, and clips that fail inspection.
 - A daily Telegram status notice explains when the cloud check found no fresh clip or when candidates failed inspection.
-- GTA YouTube and Instagram publications respect the configured spacing independently per platform. `GTA_UPLOAD_GAP_SECONDS` defaults to 600 (10 minutes) and accepts 300–600 seconds.
+- Approved GTA clips are queued for 9:00 AM India time; late approvals move to the next day's slot. Multiple approved clips follow at 10-minute intervals per platform.
+- After a campaign clip publishes, Telegram sends one post message with the video link, campaign link, deadline, and a **Mark submitted** button. Joining campaigns and submitting on the campaign site remain manual.
+- `GTA_UPLOAD_GAP_SECONDS` defaults to 600 (10 minutes) and accepts 300–600 seconds.
 - The system aims for strong moments, not a guaranteed number of clips or views. Source availability, campaign eligibility, free hosting limits, and quality checks can reduce output.
 
 ## Current project limitation

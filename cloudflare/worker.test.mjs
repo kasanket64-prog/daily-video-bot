@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import worker, { validateClaims, authenticate, validateMetadata, allowedApproval, parseTrends, prepareJob, uploadsComplete, fitnessTrends, selectFitnessClip, inspectionPassed, acceptPreview, inspectDraft } from './worker.mjs';
-import {liveToken,validateLiveToken,restorePinnedSourceWindows} from './worker.mjs';
+import {liveToken,validateLiveToken,restorePinnedSourceWindows,nextGtaPublishAt} from './worker.mjs';
 import {validLivePlan,publishDestinations,uploadDestinations} from './worker.mjs';
 
 for(const scenario of ['recover','exhaust','invalid-key','long-cooldown','incomplete']) test('live AI recovery: '+scenario,async()=>{
@@ -278,6 +278,44 @@ test('footage matching rejects dogs, unrelated landscapes, and duplicate clips',
 });
 
 const env = { REPOSITORY: 'owner/repo', REPOSITORY_ID: '123', OWNER_ID: '456', TELEGRAM_USER_ID: '7', TELEGRAM_CHAT_ID: '7' };
+test('GTA approval schedules at the next 9 AM India time slot', () => {
+  const ist = (day, hour, minute = 0) => Math.floor(Date.UTC(2026, 10, day, hour, minute) / 1000) - 19800;
+  assert.equal(nextGtaPublishAt(ist(24, 8, 59)), ist(24, 9));
+  assert.equal(nextGtaPublishAt(ist(24, 9)), ist(24, 9));
+  assert.equal(nextGtaPublishAt(ist(24, 9, 1)), ist(25, 9));
+});
+
+test('Telegram approval stores the timestamp used by the 9 AM queue', async () => {
+  const id = '2026-11-24-g01-short';
+  const job = { id, status:'pending', expires:Math.floor(Date.now()/1000)+3600, message_id:42,
+    metadata:JSON.stringify({gta:true,liveChannel:'test-channel',title:'Approved GTA clip'}) };
+  const DB = { prepare(sql) { return { bind(...values) { return {
+    async first() { return sql.includes('SELECT * FROM jobs') ? job : null; },
+    async run() {
+      assert.match(sql,/json_set\(metadata,'\$\.approved_at',\?\)/);
+      job.status=values[0];
+      job.metadata=JSON.stringify({...JSON.parse(job.metadata),approved_at:values[1]});
+      return {meta:{changes:1}};
+    }
+  }; } }; } };
+  const env={DB,GTA_REELS_ENABLED:'true',LIVE_WATCH_ENABLED:'true',LIVE_CHANNEL_ID:'test-channel',
+    TELEGRAM_BOT_TOKEN:'test',TELEGRAM_WEBHOOK_SECRET:'secret',TELEGRAM_USER_ID:'7',TELEGRAM_CHAT_ID:'7',WORKER_URL:'https://bot.example.com'};
+  const old=globalThis.fetch;
+  globalThis.fetch=async(url,init)=>{
+    assert.equal(url,'https://api.telegram.org/bottest/answerCallbackQuery');
+    const body=JSON.parse(init.body);
+    assert.match(body.text,/^Approved\. Scheduled for .+ IST\.$/);
+    return Response.json({ok:true,result:{}});
+  };
+  try {
+    const update={callback_query:{id:'callback',data:'approve:'+id,from:{id:7},message:{chat:{id:7,type:'private'},message_id:42}}};
+    const response=await worker.fetch(new Request(env.WORKER_URL+'/telegram',{method:'POST',headers:{'X-Telegram-Bot-Api-Secret-Token':'secret'},body:JSON.stringify(update)}),env);
+    assert.equal(response.status,200);
+    assert.equal(job.status,'approved');
+    assert.ok(Number.isInteger(JSON.parse(job.metadata).approved_at));
+  } finally { globalThis.fetch=old; }
+});
+
 test('YouTube-only approval completes without uploading to an unconfigured Instagram account', () => {
   assert.equal(uploadsComplete({ youtube_state: 'uploaded' }, {}), true);
   assert.equal(uploadsComplete({ youtube_state: 'started' }, {}), false);
@@ -302,7 +340,8 @@ test('pausing Instagram excludes it from existing approvals and never calls Meta
 test('later live approvals finish even when more than five earlier clips await approval',async()=>{
   const db=new DatabaseSync(':memory:');
   db.exec('CREATE TABLE jobs(id TEXT PRIMARY KEY,status TEXT,metadata TEXT,expires INTEGER,youtube_state TEXT,instagram_state TEXT)');
-  const metadata=JSON.stringify({liveChannel:'test-channel',destinations:['youtube','instagram']});
+  db.exec('CREATE TABLE settings(name TEXT PRIMARY KEY,value TEXT NOT NULL)');
+  const metadata=JSON.stringify({liveChannel:'test-channel',destinations:['youtube','instagram'],approved_at:Math.floor(Date.now()/1000)-172800});
   const insert=db.prepare('INSERT INTO jobs VALUES(?,?,?,?,?,NULL)');
   for(let i=0;i<9;i++) insert.run(String(i),i<7?'pending':'approved',metadata,Math.floor(Date.now()/1000)+3600,i<7?null:'uploaded');
   const DB={prepare(sql){const statement=db.prepare(sql);return {bind(...args){return {
@@ -314,7 +353,7 @@ test('later live approvals finish even when more than five earlier clips await a
     YOUTUBE_CLIENT_ID:'test-client',YOUTUBE_CLIENT_SECRET:'test-secret',YOUTUBE_REFRESH_TOKEN:'test-refresh',
     INSTAGRAM_ENABLED:'false',TELEGRAM_BOT_TOKEN:'test',TELEGRAM_WEBHOOK_SECRET:'test',WORKER_URL:'https://bot.example.com'};
   const old=globalThis.fetch;
-  globalThis.fetch=async url=>{assert.equal(url,'https://api.telegram.org/bottest/getWebhookInfo');return Response.json({ok:true,result:{url:env.WORKER_URL+'/telegram'}});};
+  globalThis.fetch=async url=>{assert.equal(url,'https://api.telegram.org/bottest/getWebhookInfo');return Response.json({ok:true,result:{url:env.WORKER_URL+'/telegram',allowed_updates:['callback_query','message']}});};
   try{
     let task;await worker.scheduled(null,env,{waitUntil(promise){task=promise;}});await task;
     assert.equal(db.prepare("SELECT count(*) AS count FROM jobs WHERE status='published'").get().count,2);
