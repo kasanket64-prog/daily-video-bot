@@ -441,7 +441,7 @@ export async function prepareJob(env, claims) {
 function inspectionChecks(meta) {
   const checks = meta.cartoon ? ['child_safe', 'story_matches', 'visuals_relevant', 'captions_readable', 'narration_matches'] :
     ['facts_supported', 'visuals_relevant', 'captions_readable', 'narration_matches', 'hook_clear'];
-  return meta.liveChannel ? [...checks, 'voice_clear', 'standout_moment', 'cta_supported'] : checks;
+  return meta.liveChannel ? [...checks, 'voice_clear', 'standout_moment', ...(meta.analysis?.cta ? ['cta_supported'] : [])] : checks;
 }
 
 export function inspectionPassed(result, meta = {}) {
@@ -1217,4 +1217,3 @@ export default {
   },
   async scheduled(event, env, context) { context.waitUntil(socialEnv(env).then(connected=>tick(connected))); }
 };
-
