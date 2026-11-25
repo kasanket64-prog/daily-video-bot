@@ -200,10 +200,13 @@ def recent_clips(client, job, policy, history, seen, result, deadline):
     except Exception:
         result["lookup_failures"] = result.get("lookup_failures", 0) + 1
         return
+    entries = listing.get("entries", [])
+    result["clip_listings"] = result.get("clip_listings", 0) + 1
+    result["clip_entries"] = result.get("clip_entries", 0) + min(40, len(entries))
     used = {x.get("source_id") for x in history} | seen
     cutoff = max(datetime(2026, 11, 18, tzinfo=timezone.utc).timestamp(), time.time()-86400)
     checked = 0
-    for entry in islice(listing.get("entries", []), 20):
+    for entry in islice(entries, 20):
         if time.monotonic() >= deadline or checked >= 2:
             break
         clip_id = str(entry.get("id", ""))
@@ -216,12 +219,14 @@ def recent_clips(client, job, policy, history, seen, result, deadline):
         try:
             clip = client.extract_info(url, download=False)
         except Exception:
+            result["lookup_failures"] = result.get("lookup_failures", 0) + 1
             continue
         eligible = (str(clip.get("id")) == clip_id and str(clip.get("channel_id")) == policy["clips_channel_id"]
             and isinstance(clip.get("timestamp"), (int, float)) and cutoff <= clip["timestamp"] <= time.time()+300
             and any(str(c).casefold() in ("grand theft auto vi", "grand theft auto 6", "gta vi", "gta 6") for c in clip.get("categories", []))
             and isinstance(clip.get("duration"), (int, float)) and 12 <= clip["duration"] <= 90)
         if eligible:
+            result["eligible_clips"] = result.get("eligible_clips", 0) + 1
             yield clip, url
         else:
             post(job, "clip-history", {"creator": policy["user"], "source_id": source_id})
@@ -230,7 +235,9 @@ def recent_clips(client, job, policy, history, seen, result, deadline):
 
 def run(job):
     global last_result
-    result = {"delivered": 0, "held": 0, "state": "complete", "stage": "lookup"}
+    result = {"delivered": 0, "held": 0, "state": "complete", "stage": "lookup",
+              "streams_checked": 0, "live_gta_streams": 0, "clip_listings": 0,
+              "clip_entries": 0, "eligible_clips": 0, "lookup_failures": 0}
     try:
         history = post(job, "short-history", {})
         slots = [n for n in range(1, 41) if not any(x["id"] == job["batchDay"] + f"-g{n:02d}-short" for x in history)]
@@ -249,13 +256,16 @@ def run(job):
             result["stage"] = "lookup"
             with YoutubeDL({"quiet": True, "logger": Quiet(), "socket_timeout": 10,
                             "retries": 0, "extractor_retries": 0}) as client:
+                result["streams_checked"] += 1
                 try:
                     stream = client.extract_info("https://www.twitch.tv/" + user, download=False)
                 except Exception:
+                    result["lookup_failures"] += 1
                     stream = None
                 if (stream and stream.get("is_live") and stream.get("uploader_id", "").casefold() == user
                         and re.search(r"GTA\s*(6|VI)\b", stream.get("description", "") + stream.get("title", ""), re.I)
                         and re.fullmatch(r"[0-9]{9,20}", str(stream.get("id", "")))):
+                    result["live_gta_streams"] += 1
                     capture_media(job, policy, history, stream, "https://www.twitch.tv/" + user, slots, result, deadline, live=True)
                 if result["delivered"] or not slots:
                     break

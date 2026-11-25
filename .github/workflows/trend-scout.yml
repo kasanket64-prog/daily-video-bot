@@ -51,6 +51,11 @@ jobs:
         run: |
           if [[ "$(cat "$RUNNER_TEMP/reviewed-sources.json")" == '[]' ]]; then
             echo "No reviewed footage catalog configured. Keeping discovery results only."
+            printf '%s\n' '{"selected":null,"reason":"No rights-cleared footage source is configured; no clip was rendered or sent."}' > short-selection.json
+            {
+              echo "## No clip preview generated"
+              echo "The reviewed footage catalog is empty. Add only sources with verified reuse permission and required campaign terms, then the workflow can render candidates."
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           if [[ "$GTA_LIVE_RUN" == true ]] && ! jq -e --slurpfile catalog "$RUNNER_TEMP/reviewed-sources.json" '
