@@ -224,7 +224,7 @@ def recent_clips(client, job, policy, history, seen, result, deadline):
         source_id = "twitch:" + clip_id
         if (not re.fullmatch(r"[0-9]{9,20}", clip_id) or source_id in used
                 or not isinstance(url, str)
-                or not re.fullmatch(r"https://www\\.twitch\\.tv/" + policy["user"] + r"/clip/[A-Za-z0-9_-]+", url)):
+                or not re.fullmatch(r"https://www\.twitch\.tv/" + policy["user"] + r"/clip/[A-Za-z0-9_-]+", url)):
             continue
         checked += 1
         try:
