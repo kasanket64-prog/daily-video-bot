@@ -200,19 +200,30 @@ def recent_clips(client, job, policy, history, seen, result, deadline):
     except Exception:
         result["lookup_failures"] = result.get("lookup_failures", 0) + 1
         return
-    entries = listing.get("entries", [])
     result["clip_listings"] = result.get("clip_listings", 0) + 1
+    entries = listing.get("entries") if isinstance(listing, dict) else None
+    if not isinstance(entries, (list, tuple)):
+        if entries is not None:
+            result["lookup_failures"] = result.get("lookup_failures", 0) + 1
+        entries = []
     result["clip_entries"] = result.get("clip_entries", 0) + min(40, len(entries))
-    used = {x.get("source_id") for x in history} | seen
+    history_items = history if isinstance(history, (list, tuple)) else []
+    used = {x.get("source_id") for x in history_items if isinstance(x, dict)}
+    if isinstance(seen, set):
+        used.update(x for x in seen if isinstance(x, str))
     cutoff = max(datetime(2026, 11, 18, tzinfo=timezone.utc).timestamp(), time.time()-86400)
     checked = 0
     for entry in islice(entries, 20):
         if time.monotonic() >= deadline or checked >= 2:
             break
+        if not isinstance(entry, dict):
+            result["lookup_failures"] = result.get("lookup_failures", 0) + 1
+            continue
         clip_id = str(entry.get("id", ""))
         url = entry.get("url", "")
         source_id = "twitch:" + clip_id
         if (not re.fullmatch(r"[0-9]{9,20}", clip_id) or source_id in used
+                or not isinstance(url, str)
                 or not re.fullmatch(r"https://www\.twitch\.tv/" + policy["user"] + r"/clip/[A-Za-z0-9_-]+", url)):
             continue
         checked += 1
@@ -221,9 +232,15 @@ def recent_clips(client, job, policy, history, seen, result, deadline):
         except Exception:
             result["lookup_failures"] = result.get("lookup_failures", 0) + 1
             continue
+        if not isinstance(clip, dict):
+            result["lookup_failures"] = result.get("lookup_failures", 0) + 1
+            continue
+        categories = clip.get("categories")
+        if not isinstance(categories, (list, tuple)):
+            categories = []
         eligible = (str(clip.get("id")) == clip_id and str(clip.get("channel_id")) == policy["clips_channel_id"]
             and isinstance(clip.get("timestamp"), (int, float)) and cutoff <= clip["timestamp"] <= time.time()+300
-            and any(str(c).casefold() in ("grand theft auto vi", "grand theft auto 6", "gta vi", "gta 6") for c in clip.get("categories", []))
+            and any(str(c).casefold() in ("grand theft auto vi", "grand theft auto 6", "gta vi", "gta 6") for c in categories)
             and isinstance(clip.get("duration"), (int, float)) and 12 <= clip["duration"] <= 90)
         if eligible:
             result["eligible_clips"] = result.get("eligible_clips", 0) + 1
@@ -282,6 +299,7 @@ def run(job):
     except Exception as error:
         result["state"] = "failed"
         result["error_type"] = type(error).__name__
+        result["error_stage"] = result.get("stage", "unknown")
         if hasattr(error, "code"):
             result["http_status"] = error.code
             result["gateway"] = getattr(error, "gateway", "upstream")
