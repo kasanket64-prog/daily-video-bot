@@ -570,11 +570,13 @@ export async function createClipPlan(request, env) {
   return json(plan);
 }
 
-function gtaCatalog(env) {
+export function gtaCatalog(env) {
   const catalog = JSON.parse(env.REVIEWED_SHORT_SOURCES || '[]');
+  if (!Array.isArray(catalog)) throw new Error('Invalid reviewed Short catalog');
+  const destinations = env.INSTAGRAM_ENABLED === 'true' ? ['youtube', 'instagram'] : ['youtube'];
   return catalog.filter(entry => entry.category === 'GTA 6 gameplay' && /^youtube:[\w-]{11}$/.test(entry.source_id) &&
     entry.rights_owner_verified === true && entry.editing_allowed === true && entry.audio_cleared === true &&
-    Array.isArray(entry.platforms) && ['youtube', 'instagram'].every(p => entry.platforms.includes(p)));
+    Array.isArray(entry.platforms) && destinations.every(platform => entry.platforms.includes(platform)));
 }
 
 async function shortInputs(env) {
@@ -1042,10 +1044,13 @@ async function liveRoute(request, env, path) {
   if (path === '/live/report') {
     const input = await request.json();
     const count = name => Number.isInteger(input[name]) && input[name]>=0 && input[name]<=40 ? input[name] : 0;
+    const lookupStats = Object.fromEntries(['streams_checked','live_gta_streams','clip_listings','clip_entries','eligible_clips','lookup_failures']
+      .filter(name=>Number.isInteger(input[name])&&input[name]>=0&&input[name]<=40).map(name=>[name,input[name]]));
     await env.DB.prepare("INSERT OR REPLACE INTO settings(name,value) VALUES('live:last_result',?)")
       .bind(JSON.stringify({at:new Date().toISOString(),delivered:count('delivered'),held:count('held'),
         stage:['lookup','clip_lookup','capture','selection','plan_frames','plan','reservation','render','inspection','delivery'].includes(input.stage)?input.stage:'unknown',
         state:['offline','complete','failed'].includes(input.state)?input.state:'failed',
+        ...lookupStats,
         ...(Number.isInteger(input.provider_status)&&input.provider_status>=400&&input.provider_status<=599?{provider_status:input.provider_status}:{}),
         ...(['Gemini','provider','upstream','Denied','Live monitoring disabled'].includes(input.gateway)?{gateway:input.gateway}:{}),
         ...(Number.isInteger(input.http_status)&&input.http_status>=400&&input.http_status<=599?{http_status:input.http_status}:{})})).run();
@@ -1059,7 +1064,8 @@ async function liveRoute(request, env, path) {
       if (notice.meta.changes) {
         const text = count('held') > 0
           ? `Today's GTA check found candidates, but none passed the quality inspection. No clip was sent for approval; the cloud check will keep looking.`
-          : `Today's GTA check found no fresh eligible clip in the reviewed streams. Nothing was sent for approval; the cloud check will keep looking.`;
+          : `Today's GTA check found no fresh eligible clip in the reviewed streams. Nothing was sent for approval; the cloud check will keep looking.` +
+            (Number.isInteger(input.streams_checked) ? ` Checked ${count('streams_checked')} streams, found ${count('live_gta_streams')} live GTA VI streams, and found ${count('eligible_clips')} eligible recent clips (${count('lookup_failures')} lookup errors).` : '');
         await message(env,text);
       }
     }
