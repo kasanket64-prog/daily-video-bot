@@ -247,7 +247,7 @@ for (const live of [false, true]) test('GTA preview sends once with correct appr
     for (let attempt = 0; attempt < 2; attempt++) {
       const request = new Request('https://bot.workers.dev/render/preview/' + id,
         { method: 'POST', headers: { 'Content-Length': String(data.length) }, body: data });
-      assert.deepEqual(await (await acceptPreview(request, { ...env, DB, TELEGRAM_BOT_TOKEN: 'private' },
+      assert.deepEqual(await (await acceptPreview(request, { ...env, GTA_AUTO_PUBLISH: 'true', DB, TELEGRAM_BOT_TOKEN: 'private' },
         { run_id: '1' }, id)).json(), { received: true });
     }
     assert.equal(sends, 1);
