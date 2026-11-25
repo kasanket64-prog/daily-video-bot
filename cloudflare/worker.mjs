@@ -545,7 +545,7 @@ export async function acceptPreview(request, env, claims, id) {
   form.set('chat_id', requireValue(env, 'TELEGRAM_CHAT_ID'));
   const testPreview = id.endsWith('-short-test');
   const immediate = meta.gta && !testPreview;
-  const autoPublish = env.GTA_AUTO_PUBLISH === 'true' && Boolean(meta.liveChannel) && !testPreview;
+  const autoPublish = false; // Keep owner approval mandatory for every live clip.
   if (immediate && !autoPublish) form.set('reply_markup', JSON.stringify({ inline_keyboard: [[
     { text: 'Approve upload', callback_data: 'approve:' + id }, { text: 'Reject', callback_data: 'reject:' + id }
   ]] }));
