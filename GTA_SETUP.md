@@ -38,6 +38,8 @@ Keep credentials in Cloudflare Worker Secrets. Do not put Google, Meta, Telegram
 | `YOUTUBE_PRIVACY` | YouTube visibility; use `private` for initial verification |
 | `INSTAGRAM_ENABLED` | Leave disabled while Instagram is paused |
 
+`REVIEWED_SHORT_SOURCES` is a JSON array used by the GitHub Actions scout. Each entry must include `category: "GTA 6 gameplay"`, `source_id: "youtube:<11-character-video-id>"`, `rights_owner_verified: true`, `editing_allowed: true`, `audio_cleared: true`, and `platforms: ["youtube"]`. Add `"instagram"` only after Instagram is enabled and that source is cleared for Instagram too. Set these clearance fields to true only when the source owner or campaign terms actually grant the needed rights; a public link alone is not enough. With no valid entry, the scout intentionally generates no clip.
+
 Use `GET /health` to confirm the Worker is reachable and the Render `/health` page to view its last run. In the Render status, `stage: clip_lookup` with zero deliveries means the service did not find a fresh eligible clip in that check; `stage: inspection` with held candidates means quality checks rejected them. A zero-view YouTube Short is not automatically proof of a broken upload; inspect its status and allow analytics time to update.
 
 ## First run after code changes
